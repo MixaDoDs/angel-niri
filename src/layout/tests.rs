@@ -928,6 +928,9 @@ impl Op {
                 mut params,
                 next_to_id,
             } => {
+                if layout.is_minimized(&params.id) {
+                    return;
+                }
                 let mut found_next_to = false;
 
                 if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
@@ -997,6 +1000,9 @@ impl Op {
                 mut params,
                 ws_name,
             } => {
+                if layout.is_minimized(&params.id) {
+                    return;
+                }
                 let ws_name = format!("ws{ws_name}");
                 let mut ws_id = None;
 
@@ -1074,7 +1080,7 @@ impl Op {
                 layout.minimize_window(&id);
             }
             Op::UnminimizeWindow { id, activate } => {
-                layout.unminimize_window(&id, activate);
+                layout.unminimize_window(&id, activate, None);
             }
             Op::FullscreenWindow(id) => {
                 if !layout.has_window(&id) {
@@ -1749,6 +1755,30 @@ fn minimized_window_can_close_and_outlive_its_workspace_and_output() {
     assert!(!layout.has_window(&0));
     assert!(layout.has_window(&1));
     assert_eq!(layout.focus().map(|win| *win.id()), Some(1));
+}
+
+#[test]
+fn minimized_window_restores_onto_another_workspace() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::MinimizeWindow(0),
+        Op::FocusWorkspaceDown,
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+    ]);
+    let to = layout.active_workspace().unwrap().id();
+    assert!(layout.unminimize_window(&0, false, Some(to)));
+    layout.verify_invariants();
+    let ws = layout.active_workspace().unwrap();
+    assert!(ws.has_window(&0));
+    assert_eq!(layout.focus().map(|win| *win.id()), Some(2));
 }
 
 #[test]

@@ -914,12 +914,26 @@ impl State {
             Action::MinimizeWindow => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
-                    self.minimize_window(&window);
+                    self.request_minimize(&window);
                 }
             }
             Action::MinimizeWindowById(id) => {
                 let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
                 let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.request_minimize(&window);
+                }
+            }
+            Action::MinimizeWindowNow(id) => {
+                let window = match id {
+                    Some(id) => self
+                        .niri
+                        .layout
+                        .windows()
+                        .find(|(_, m)| m.id().get() == id)
+                        .map(|(_, m)| m.window.clone()),
+                    None => self.niri.layout.focus().map(|m| m.window.clone()),
+                };
                 if let Some(window) = window {
                     self.minimize_window(&window);
                 }
@@ -969,7 +983,7 @@ impl State {
                         .find(|m| m.id().get() == id)
                         .map(|m| m.window.clone());
                     if let Some(window) = window {
-                        self.unminimize_window(&window, true);
+                        self.unminimize_window(&window, true, None);
                     }
                 }
             }
@@ -1449,7 +1463,20 @@ impl State {
             } => {
                 let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
                 let window = window.map(|(_, m)| m.window.clone());
-                if let Some(window) = window {
+                // angel-niri: moving a minimized window brings it back onto that workspace.
+                let minimized = (self.niri.layout.minimized_windows())
+                    .find(|m| m.id().get() == id)
+                    .map(|m| m.window.clone());
+                if let Some(window) = minimized {
+                    let ws = self
+                        .niri
+                        .layout
+                        .find_workspace_by_ref(reference)
+                        .map(|ws| ws.id());
+                    if let Some(ws) = ws {
+                        self.unminimize_window(&window, focus, Some(ws));
+                    }
+                } else if let Some(window) = window {
                     if let Some((output, index)) =
                         self.niri.find_output_and_workspace_index(reference)
                     {

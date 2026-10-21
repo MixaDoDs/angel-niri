@@ -155,6 +155,8 @@ pub enum Action {
     MinimizeWindow,
     #[knuffel(skip)]
     MinimizeWindowById(u64),
+    #[knuffel(skip)]
+    MinimizeWindowNow(Option<u64>),
     FullscreenWindow,
     #[knuffel(skip)]
     FullscreenWindowById(u64),
@@ -442,8 +444,9 @@ impl From<niri_ipc::Action> for Action {
             }
             niri_ipc::Action::CloseWindow { id: None } => Self::CloseWindow,
             niri_ipc::Action::CloseWindow { id: Some(id) } => Self::CloseWindowById(id),
-            niri_ipc::Action::MinimizeWindow { id: None } => Self::MinimizeWindow,
-            niri_ipc::Action::MinimizeWindow { id: Some(id) } => Self::MinimizeWindowById(id),
+            niri_ipc::Action::MinimizeWindow { id, now: true } => Self::MinimizeWindowNow(id),
+            niri_ipc::Action::MinimizeWindow { id: None, .. } => Self::MinimizeWindow,
+            niri_ipc::Action::MinimizeWindow { id: Some(id), .. } => Self::MinimizeWindowById(id),
             niri_ipc::Action::FullscreenWindow { id: None } => Self::FullscreenWindow,
             niri_ipc::Action::FullscreenWindow { id: Some(id) } => Self::FullscreenWindowById(id),
             niri_ipc::Action::ToggleWindowedFullscreen { id: None } => {

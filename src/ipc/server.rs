@@ -113,6 +113,16 @@ impl IpcServer {
         })
     }
 
+    /// angel-niri: whether any client listens on the event stream.
+    pub fn has_event_streams(&self) -> bool {
+        !self.event_streams.borrow().is_empty()
+    }
+
+    /// angel-niri: sends an event that is not part of the replicated state.
+    pub fn send_transient_event(&self, event: Event) {
+        self.send_event(event);
+    }
+
     fn send_event(&self, event: Event) {
         let mut streams = self.event_streams.borrow_mut();
         let mut to_remove = Vec::new();

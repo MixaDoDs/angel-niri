@@ -469,6 +469,17 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                     Event::WindowOpenedOrChanged { window } => {
                         println!("Window opened or changed: {window:?}");
                     }
+                    Event::WindowMinimizeRequested {
+                        id,
+                        output,
+                        rect,
+                        snapshot,
+                    } => {
+                        println!(
+                            "Window minimize requested: id {id}, on {output:?} at {rect:?}, \
+                             snapshot {snapshot:?}"
+                        );
+                    }
                     Event::WindowClosed { id } => {
                         println!("Window closed: {id}");
                     }

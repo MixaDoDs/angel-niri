@@ -308,6 +308,15 @@ pub enum Action {
         /// If `None`, uses the focused window.
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
+        /// Minimize it right away.
+        ///
+        /// Otherwise, when something listens on the event stream, niri first sends
+        /// [`Event::WindowMinimizeRequested`] with a snapshot of the window and minimizes it a
+        /// moment later, unless the listener (a shell animating it into its dock) does it first
+        /// with `now`.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        now: bool,
     },
     /// Toggle fullscreen on a window.
     #[cfg_attr(
@@ -1690,6 +1699,21 @@ pub enum Event {
         ///
         /// If the window is focused, all other windows are no longer focused.
         window: Window,
+    },
+    /// A window is about to be minimized (angel-niri).
+    ///
+    /// Sent for every minimize request when something listens on the event stream. The window is
+    /// still in the layout; niri minimizes it shortly unless the listener does it first with
+    /// [`Action::MinimizeWindow`] `now`.
+    WindowMinimizeRequested {
+        /// Id of the window.
+        id: u64,
+        /// Output the window is shown on, if it is on screen.
+        output: Option<String>,
+        /// Where the window is on that output: x, y, width, height in logical pixels.
+        rect: Option<[f64; 4]>,
+        /// Path of a PNG snapshot of the window, cut to its geometry, if one was made.
+        snapshot: Option<String>,
     },
     /// A toplevel window was closed.
     WindowClosed {

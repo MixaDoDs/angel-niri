@@ -258,6 +258,9 @@ pub struct Niri {
     // Windows which don't have a buffer attached yet.
     pub unmapped_windows: HashMap<WlSurface, Unmapped>,
 
+    /// angel-niri: windows asked to minimize, waiting for the shell to take them (minimize.rs).
+    pub minimize_pending: HashSet<u64>,
+
     /// Layer surfaces which don't have a buffer attached yet.
     pub unmapped_layer_surfaces: HashSet<WlSurface>,
 
@@ -1136,40 +1139,6 @@ impl State {
 
         // FIXME: granular
         self.niri.queue_redraw_all();
-    }
-
-    /// angel-niri: takes a window out of the layout (the app's own button, a taskbar, a bind, IPC).
-    pub fn minimize_window(&mut self, window: &Window) {
-        let was_active = self.niri.layout.focus().map(|m| &m.window) == Some(window);
-
-        if !self.niri.layout.minimize_window(window) {
-            return;
-        }
-
-        if was_active {
-            self.maybe_warp_cursor_to_focus();
-        }
-
-        // FIXME: granular
-        self.niri.queue_redraw_all();
-    }
-
-    /// angel-niri: puts a minimized window back where it was. Returns whether it was minimized.
-    pub fn unminimize_window(&mut self, window: &Window, activate: bool) -> bool {
-        if !self.niri.layout.unminimize_window(window, activate) {
-            return false;
-        }
-
-        self.niri.layout.start_open_animation_for_window(window);
-
-        if activate {
-            self.niri.layer_shell_on_demand_focus = None;
-            self.focus_window(window);
-        } else {
-            // FIXME: granular
-            self.niri.queue_redraw_all();
-        }
-        true
     }
 
     pub fn confirm_mru(&mut self) {
@@ -2821,6 +2790,7 @@ impl Niri {
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
             unmapped_windows: HashMap::new(),
+            minimize_pending: HashSet::new(),
             unmapped_layer_surfaces: HashSet::new(),
             mapped_layer_surfaces: HashMap::new(),
             root_surface: HashMap::new(),

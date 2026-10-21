@@ -5121,6 +5121,33 @@ impl<W: LayoutElement> Layout<W> {
             .find(|win| win.is_wl_surface(wl_surface))
     }
 
+    /// Where the window is drawn now: its output and its visual geometry within that output.
+    /// `None` when it isn't on screen or the overview is open (it is drawn zoomed there).
+    pub fn window_render_rect(&self, window: &W::Id) -> Option<(&Output, Rectangle<f64, Logical>)> {
+        if self.overview_progress.is_some() {
+            return None;
+        }
+        let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
+            return None;
+        };
+        for mon in monitors {
+            for (ws, geo) in mon.workspaces_with_render_geo() {
+                for (tile, pos, visible) in ws.tiles_with_render_positions() {
+                    if tile.window().id() != window {
+                        continue;
+                    }
+                    if !visible {
+                        return None;
+                    }
+                    let loc = geo.loc + pos + tile.window_loc();
+                    let size = tile.window().size().to_f64();
+                    return Some((mon.output(), Rectangle::new(loc, size)));
+                }
+            }
+        }
+        None
+    }
+
     /// Takes the window out of the layout, remembering its place. Returns whether it did.
     pub fn minimize_window(&mut self, window: &W::Id) -> bool {
         let Some((output_name, workspace_id, column_idx)) =
@@ -5160,17 +5187,29 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     /// Puts a minimized window back where it was: its workspace and column if they are still
-    /// there, else the workspace in front on its output, else the active output.
-    pub fn unminimize_window(&mut self, window: &W::Id, activate: bool) -> bool {
+    /// there, else the workspace in front on its output, else the active output. With `to`, onto
+    /// that workspace instead (as a new column next to its active one).
+    pub fn unminimize_window(
+        &mut self,
+        window: &W::Id,
+        activate: bool,
+        to: Option<WorkspaceId>,
+    ) -> bool {
         let Some(idx) = self.minimized_idx(window) else {
             return false;
         };
         let MinimizedWindow {
             removed,
             output_name,
-            workspace_id,
-            column_idx,
+            mut workspace_id,
+            mut column_idx,
         } = self.minimized.remove(idx);
+        if let Some(to) = to.filter(|to| self.find_workspace_by_id(*to).is_some()) {
+            if to != workspace_id {
+                workspace_id = to;
+                column_idx = None;
+            }
+        }
         let RemovedTile {
             mut tile,
             width,

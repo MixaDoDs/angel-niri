@@ -881,7 +881,7 @@ impl XdgShellHandler for State {
             .find_window_and_output(surface.wl_surface())
         {
             let window = mapped.window.clone();
-            self.minimize_window(&window);
+            self.request_minimize(&window);
         }
     }
 
