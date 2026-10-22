@@ -187,3 +187,8 @@ assets = [
     ["resources/niri.service", "/usr/lib/systemd/user/", "644"],
     ["resources/niri-shutdown.target", "/usr/lib/systemd/user/", "644"],
 ]
+
+# angel-niri: smithay with our patches (~/Work/AngelOS/angel-smithay, branch angel on the rev above)
+[patch."https://github.com/Smithay/smithay.git"]
+smithay = { path = "../angel-smithay" }
+smithay-drm-extras = { path = "../angel-smithay/smithay-drm-extras" }
