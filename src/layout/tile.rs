@@ -56,7 +56,7 @@ pub struct Tile<W: LayoutElement> {
     /// angel-niri (inactive_dim.rs): dots over the window while it isn't the focused one, and
     /// what they were last drawn with (the element is only damaged when that changes).
     dim: ShaderRenderElement,
-    dim_drawn: Option<(Size<f64, Logical>, f32, f32)>,
+    dim_drawn: Option<(Size<f64, Logical>, f32, f32, f32)>,
 
     /// This tile's current sizing mode.
     ///
@@ -571,7 +571,12 @@ impl<W: LayoutElement> Tile<W> {
         // angel-niri (inactive_dim.rs)
         let (pixel, alpha) = (crate::inactive_dim::pixel(), crate::inactive_dim::alpha());
         self.dim_drawn = if pixel > 0. && !is_active && expanded_progress < 1. {
-            let params = (self.animated_window_size(), pixel, alpha);
+            let corner = self
+                .window
+                .geometry_corner_radius()
+                .scaled_by(1. - expanded_progress as f32)
+                .top_left;
+            let params = (self.animated_window_size(), pixel, alpha, corner);
             if self.dim_drawn != Some(params) {
                 self.dim.update(
                     params.0,
@@ -581,6 +586,7 @@ impl<W: LayoutElement> Tile<W> {
                     Rc::new([
                         Uniform::new("dim_color", [0., 0., 0., alpha]),
                         Uniform::new("dim_pixel", pixel),
+                        Uniform::new("dim_corner", corner),
                     ]),
                     HashMap::new(),
                 );

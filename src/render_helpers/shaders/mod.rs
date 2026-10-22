@@ -98,6 +98,7 @@ impl Shaders {
             &[
                 UniformName::new("dim_color", UniformType::_4f),
                 UniformName::new("dim_pixel", UniformType::_1f),
+                UniformName::new("dim_corner", UniformType::_1f),
             ],
             &[],
         )

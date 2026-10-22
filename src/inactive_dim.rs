@@ -1,6 +1,7 @@
 //! angel-niri: inactive windows dimmed. `niri msg action set-inactive-dim PIXEL [--alpha A]`
-//! (0 = off): every window but the focused one gets a sparse grid of dark dots (dim.frag), one of
-//! PIXEL logical px in every two by two, at opacity A. Not while fullscreen or maximized.
+//! (0 = off): every window but the focused one gets a vignette of dark dots (dim.frag), PIXEL
+//! logical px each, ordered-dithered from dense at the edges to none in the middle, at opacity A.
+//! Not while fullscreen or maximized.
 //! A shell with pixel-art decorations sets it; nothing goes to niri's config.
 
 use std::sync::atomic::{AtomicU32, Ordering};
