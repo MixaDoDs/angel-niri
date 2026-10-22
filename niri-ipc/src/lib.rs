@@ -339,6 +339,20 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Dim inactive windows with a sparse grid of dark dots (angel-niri).
+    ///
+    /// Every window but the focused one gets one dot of `pixel` logical pixels in every two by two,
+    /// at opacity `alpha`. 0 turns it off.
+    #[cfg_attr(feature = "clap", clap(about = "Dim inactive windows with dots"))]
+    SetInactiveDim {
+        /// The dots' pixel in logical pixels; 0 to turn it off.
+        #[cfg_attr(feature = "clap", arg())]
+        pixel: f64,
+        /// The dots' opacity, 0 to 1.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 0.5))]
+        #[serde(default = "default_dim_alpha")]
+        alpha: f64,
+    },
     /// Draw the overview in pixels (angel-niri).
     ///
     /// Sharp (nearest-filtered) thumbnails, zooming in `steps` steps, and a frame of 2 × `pixel`
@@ -2326,6 +2340,10 @@ fn default_true() -> bool {
 
 fn default_pixel_steps() -> u32 {
     2
+}
+
+fn default_dim_alpha() -> f64 {
+    0.5
 }
 
 fn default_overview_steps() -> u32 {

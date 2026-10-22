@@ -1,11 +1,12 @@
 use core::f64;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use niri_config::utils::MergeWith as _;
 use niri_config::{Color, CornerRadius, GradientInterpolation};
 use niri_ipc::WindowLayout;
 use smithay::backend::renderer::element::{Element, Kind};
-use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::gles::{GlesRenderer, Uniform};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 
 use super::focus_ring::{FocusRing, FocusRingRenderElement};
@@ -25,6 +26,8 @@ use crate::render_helpers::damage::ExtraDamage;
 use crate::render_helpers::offscreen::{OffscreenBuffer, OffscreenRenderElement};
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::resize::ResizeRenderElement;
+use crate::render_helpers::shader_element::ShaderRenderElement;
+use crate::render_helpers::shaders::ProgramType;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -49,6 +52,11 @@ pub struct Tile<W: LayoutElement> {
 
     /// The shadow around the window.
     shadow: Shadow,
+
+    /// angel-niri (inactive_dim.rs): dots over the window while it isn't the focused one, and
+    /// what they were last drawn with (the element is only damaged when that changes).
+    dim: ShaderRenderElement,
+    dim_drawn: Option<(Size<f64, Logical>, f32, f32)>,
 
     /// This tile's current sizing mode.
     ///
@@ -129,6 +137,7 @@ niri_render_elements! {
         Resize = ResizeRenderElement,
         Border = BorderRenderElement,
         Shadow = ShadowRenderElement,
+        Dim = ShaderRenderElement,
         ClippedSurface = ClippedSurfaceRenderElement<R>,
         Offscreen = OffscreenRenderElement,
         ExtraDamage = ExtraDamage,
@@ -199,6 +208,8 @@ impl<W: LayoutElement> Tile<W> {
             border: FocusRing::new(border_config.into()),
             focus_ring: FocusRing::new(focus_ring_config),
             shadow: Shadow::new(shadow_config),
+            dim: ShaderRenderElement::empty(ProgramType::Dim, Kind::Unspecified),
+            dim_drawn: None,
             sizing_mode,
             fullscreen_backdrop: SolidColorBuffer::new((0., 0.), fullscreen_backdrop_color),
             restore_to_floating: false,
@@ -556,6 +567,28 @@ impl<W: LayoutElement> Tile<W> {
             self.scale,
             1. - expanded_progress as f32,
         );
+
+        // angel-niri (inactive_dim.rs)
+        let (pixel, alpha) = (crate::inactive_dim::pixel(), crate::inactive_dim::alpha());
+        self.dim_drawn = if pixel > 0. && !is_active && expanded_progress < 1. {
+            let params = (self.animated_window_size(), pixel, alpha);
+            if self.dim_drawn != Some(params) {
+                self.dim.update(
+                    params.0,
+                    None,
+                    self.scale as f32,
+                    1.,
+                    Rc::new([
+                        Uniform::new("dim_color", [0., 0., 0., alpha]),
+                        Uniform::new("dim_pixel", pixel),
+                    ]),
+                    HashMap::new(),
+                );
+            }
+            Some(params)
+        } else {
+            None
+        };
 
         self.fullscreen_backdrop.resize(animated_tile_size);
     }
@@ -1128,6 +1161,11 @@ impl<W: LayoutElement> Tile<W> {
             xray_pos,
             &mut |elem| push(elem.into()),
         );
+
+        // angel-niri (inactive_dim.rs): the dots over the window, under its popups
+        if self.dim_drawn.is_some() {
+            push(self.dim.clone().with_location(window_render_loc).into());
+        }
 
         // If we're resizing, try to render a shader, or a fallback.
         let mut pushed_resize = false;

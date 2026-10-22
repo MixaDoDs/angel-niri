@@ -923,6 +923,10 @@ impl State {
                 crate::pixel_overview::set(pixel as f32, steps, font);
                 self.niri.queue_redraw_all();
             }
+            Action::SetInactiveDim(pixel, alpha) => {
+                crate::inactive_dim::set(pixel as f32, alpha as f32);
+                self.niri.queue_redraw_all();
+            }
             Action::SetPixelShadow(pixel) => {
                 crate::pixel_shadow::set(pixel as f32);
                 // the window rules don't change, so their tiles are told directly

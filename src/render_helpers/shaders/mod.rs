@@ -13,6 +13,8 @@ use crate::render_helpers::blur::BlurProgram;
 pub struct Shaders {
     pub border: Option<ShaderProgram>,
     pub shadow: Option<ShaderProgram>,
+    /// angel-niri (inactive_dim.rs)
+    pub dim: Option<ShaderProgram>,
     pub clipped_surface: Option<GlesTexProgram>,
     pub postprocess_and_clip: Option<GlesTexProgram>,
     pub resize: Option<ShaderProgram>,
@@ -28,6 +30,7 @@ pub struct Shaders {
 pub enum ProgramType {
     Border,
     Shadow,
+    Dim,
     Resize,
     Close,
     Open,
@@ -86,6 +89,20 @@ impl Shaders {
         )
         .map_err(|err| {
             warn!("error compiling shadow shader: {err:?}");
+        })
+        .ok();
+
+        let dim = ShaderProgram::compile(
+            renderer,
+            include_str!("dim.frag"),
+            &[
+                UniformName::new("dim_color", UniformType::_4f),
+                UniformName::new("dim_pixel", UniformType::_1f),
+            ],
+            &[],
+        )
+        .map_err(|err| {
+            warn!("error compiling dim shader: {err:?}");
         })
         .ok();
 
@@ -166,6 +183,7 @@ impl Shaders {
         Self {
             border,
             shadow,
+            dim,
             clipped_surface,
             postprocess_and_clip,
             resize,
@@ -216,6 +234,7 @@ impl Shaders {
         match program {
             ProgramType::Border => self.border.clone(),
             ProgramType::Shadow => self.shadow.clone(),
+            ProgramType::Dim => self.dim.clone(),
             ProgramType::Resize => self
                 .custom_resize
                 .borrow()

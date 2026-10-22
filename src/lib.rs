@@ -13,6 +13,7 @@ pub mod dbus;
 pub mod frame_clock;
 pub mod game;
 pub mod handlers;
+pub mod inactive_dim;
 pub mod input;
 pub mod ipc;
 pub mod layer;

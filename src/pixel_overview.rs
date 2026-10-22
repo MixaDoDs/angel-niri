@@ -1,7 +1,7 @@
 //! angel-niri: pixel overview. `niri msg action set-pixel-overview PIXEL [--steps N] [--font F]`
 //! (0 = off), for a shell with pixel-art decorations; nothing goes to niri's config:
 //! - the thumbnails are scaled down with nearest filtering: sharp pixels, no blur;
-//! - zooming in and out goes in `steps` steps instead of smoothly;
+//! - zooming in and out goes in `steps` steps instead of smoothly, and so does a workspace switch;
 //! - every workspace gets a frame of 2 × PIXEL logical px with notched corners, the active one in
 //!   the focus ring's active colour, and its name (or number) left of it in the font `F` ("Family
 //!   SIZE", size in logical px; a pixel font is drawn without antialiasing).
@@ -52,6 +52,14 @@ pub fn step(progress: f64) -> f64 {
     }
     let steps = f64::from(STEPS.load(Ordering::Relaxed));
     (progress * steps).round() / steps
+}
+
+/// A value animated from `from` to `to`, in steps while pixel overview is on (a workspace switch).
+pub fn step_between(from: f64, to: f64, value: f64) -> f64 {
+    if (to - from).abs() < f64::EPSILON {
+        return value;
+    }
+    from + step((value - from) / (to - from)) * (to - from)
 }
 
 /// Nearest filtering for the thumbnails while `output`'s overview shows; linear otherwise.

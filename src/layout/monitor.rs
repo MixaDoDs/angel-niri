@@ -200,7 +200,10 @@ pub type MonitorRenderElement<R> =
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
         match self {
-            WorkspaceSwitch::Animation(anim) => anim.value(),
+            // angel-niri (pixel_overview.rs): in steps while it is on
+            WorkspaceSwitch::Animation(anim) => {
+                crate::pixel_overview::step_between(anim.from(), anim.to(), anim.value())
+            }
             WorkspaceSwitch::Gesture(gesture) => {
                 gesture.current_idx + gesture.animation.as_ref().map_or(0., |anim| anim.value())
             }
