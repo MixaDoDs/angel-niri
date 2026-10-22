@@ -911,6 +911,10 @@ impl State {
                     mapped.toplevel().send_close();
                 }
             }
+            Action::SetBackgroundFps(fps, output) => {
+                self.niri.set_background_fps(fps, output);
+                self.niri.queue_redraw_all();
+            }
             Action::MinimizeWindow => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
