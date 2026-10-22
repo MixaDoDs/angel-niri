@@ -158,6 +158,16 @@ pub enum Action {
     SetWindowBehindScene(u64, bool),
     #[knuffel(skip)]
     SetPixelCorners(f64, u32),
+    #[knuffel(skip)]
+    /// look, app-id, image, cell, cover, background
+    SetPrivacyLook(
+        String,
+        Option<String>,
+        Option<String>,
+        f64,
+        bool,
+        Option<String>,
+    ),
     MinimizeWindow,
     #[knuffel(skip)]
     MinimizeWindowById(u64),
@@ -453,6 +463,14 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetBackgroundFps { fps, output } => {
                 Self::SetBackgroundFps(fps, output)
             }
+            niri_ipc::Action::SetPrivacyLook {
+                look,
+                app_id,
+                image,
+                cell,
+                cover,
+                background,
+            } => Self::SetPrivacyLook(look, app_id, image, cell, cover, background),
             niri_ipc::Action::SetPixelCorners { pixel, steps } => {
                 Self::SetPixelCorners(pixel, steps)
             }

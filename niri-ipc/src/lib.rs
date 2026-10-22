@@ -333,6 +333,40 @@ pub enum Action {
         #[serde(default = "default_pixel_steps")]
         steps: u32,
     },
+    /// What a blocked-out window shows in screencasts instead of black (angel-niri).
+    ///
+    /// `black`; `mosaic`: the window in blocks of `cell` logical pixels, its popups hidden;
+    /// `image`: a PNG on `background`, centred and scaled up in whole steps (pixel art), or
+    /// filling the window with `cover`; `default` (with `app_id`): back to the common look.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Set what blocked-out windows show in screencasts")
+    )]
+    SetPrivacyLook {
+        /// black, mosaic, image, or (with --app-id) default.
+        #[cfg_attr(feature = "clap", arg())]
+        look: String,
+        /// The app this look is for; none: every blocked-out window without one of its own.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        app_id: Option<String>,
+        /// The PNG for `image`.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        image: Option<String>,
+        /// The mosaic's block in logical pixels.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 16.))]
+        #[serde(default = "default_privacy_cell")]
+        cell: f64,
+        /// Fill the window with the image (smooth) instead of centring it.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        cover: bool,
+        /// The colour around a centred image, #rrggbb or #rrggbbaa.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        background: Option<String>,
+    },
     /// Draw a floating window behind a layered wallpaper's nearer things (angel-niri).
     ///
     /// The window goes under the bottom layer-shell layer, where a shell draws the scene's
@@ -2226,6 +2260,10 @@ fn default_true() -> bool {
 
 fn default_pixel_steps() -> u32 {
     2
+}
+
+fn default_privacy_cell() -> f64 {
+    16.
 }
 
 fn default_position_change() -> PositionChange {

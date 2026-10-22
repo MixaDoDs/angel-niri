@@ -919,6 +919,19 @@ impl State {
                 self.niri.refresh_window_rules();
                 self.niri.queue_redraw_all();
             }
+            Action::SetPrivacyLook(look, app_id, image, cell, cover, background) => {
+                if let Err(err) = crate::privacy_look::set(
+                    &look,
+                    app_id,
+                    image.as_deref(),
+                    cell,
+                    cover,
+                    background.as_deref(),
+                ) {
+                    warn!("error setting the privacy look: {err:?}");
+                }
+                self.niri.queue_redraw_all();
+            }
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }

@@ -420,6 +420,8 @@ impl Thumbnail {
                 // Otherwise, render the solid color as is.
                 LayoutElementRenderElement::SolidColor(elem).into()
             }
+            // angel-niri (privacy_look.rs): a blocked-out window's look, over its place.
+            elem @ LayoutElementRenderElement::PrivacyLook(_) => elem.into(),
             elem @ LayoutElementRenderElement::BackgroundEffect(_) => {
                 // This is only used on popups for now. If subsurface blur is implemented, this
                 // will need to be handled somehow.

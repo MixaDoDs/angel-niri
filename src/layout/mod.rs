@@ -115,6 +115,7 @@ niri_render_elements! {
         Wayland = WaylandSurfaceRenderElement<R>,
         SolidColor = SolidColorRenderElement,
         BackgroundEffect = BackgroundEffectElement,
+        PrivacyLook = crate::privacy_look::PrivacyLookElement,
     }
 }
 

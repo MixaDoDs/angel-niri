@@ -17,6 +17,7 @@ pub struct Shaders {
     pub postprocess_and_clip: Option<GlesTexProgram>,
     pub resize: Option<ShaderProgram>,
     pub gradient_fade: Option<GlesTexProgram>,
+    pub nearest: Option<GlesTexProgram>,
     pub blur: Option<BlurProgram>,
     pub custom_resize: RefCell<Option<ShaderProgram>>,
     pub custom_close: RefCell<Option<ShaderProgram>>,
@@ -144,6 +145,16 @@ impl Shaders {
             })
             .ok();
 
+        let nearest = renderer
+            .compile_custom_texture_shader(
+                include_str!("nearest.frag"),
+                &[UniformName::new("tex_size", UniformType::_2f)],
+            )
+            .map_err(|err| {
+                warn!("error compiling nearest shader: {err:?}");
+            })
+            .ok();
+
         let blur = BlurProgram::compile(renderer)
             .map_err(|err| {
                 warn!("error compiling blur shaders: {err:?}");
@@ -157,6 +168,7 @@ impl Shaders {
             postprocess_and_clip,
             resize,
             gradient_fade,
+            nearest,
             blur,
             custom_resize: RefCell::new(None),
             custom_close: RefCell::new(None),

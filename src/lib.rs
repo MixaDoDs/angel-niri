@@ -19,6 +19,7 @@ pub mod layout;
 pub mod minimize;
 pub mod niri;
 pub mod pixel_corners;
+pub mod privacy_look;
 pub mod protocols;
 pub mod render_helpers;
 pub mod rubber_band;

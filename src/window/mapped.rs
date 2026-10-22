@@ -113,6 +113,8 @@ pub struct Mapped {
 
     /// Buffer to draw instead of the window when it should be blocked out.
     block_out_buffer: RefCell<SolidColorBuffer>,
+    /// angel-niri (privacy_look.rs): what the blocked-out window shows in screencasts.
+    privacy_look: RefCell<crate::privacy_look::WindowLook>,
 
     /// The blur config, passed for background effect rendering.
     blur_config: niri_config::Blur,
@@ -303,6 +305,7 @@ impl Mapped {
             is_window_cast_target: false,
             ignore_opacity_window_rule: false,
             block_out_buffer: RefCell::new(SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.])),
+            privacy_look: RefCell::new(Default::default()),
             blur_config: config.blur,
             animate_next_configure: false,
             animate_serials: Vec::new(),
@@ -687,8 +690,24 @@ impl LayoutElement for Mapped {
         push: &mut dyn FnMut(LayoutElementRenderElement<R>),
     ) {
         if ctx.target.should_block_out(self.rules.block_out_from) {
+            let geo = self.window.geometry();
+            let app_id = with_toplevel_role(self.toplevel(), |role| role.app_id.clone());
+            let look = crate::privacy_look::look_for(app_id.as_deref());
+            let color = crate::privacy_look::render(
+                ctx.renderer,
+                &look,
+                &mut self.privacy_look.borrow_mut(),
+                self.toplevel().wl_surface(),
+                geo.loc.upscale(-1).to_f64(),
+                geo.size.to_f64(),
+                location,
+                alpha,
+                &mut |elem| push(elem.into()),
+            );
+
             let mut buffer = self.block_out_buffer.borrow_mut();
-            buffer.resize(self.window.geometry().size.to_f64());
+            buffer.resize(geo.size.to_f64());
+            buffer.set_color(color.unwrap_or([0., 0., 0., 1.]));
             let elem =
                 SolidColorRenderElement::from_buffer(&buffer, location, alpha, Kind::Unspecified);
             push(elem.into());
