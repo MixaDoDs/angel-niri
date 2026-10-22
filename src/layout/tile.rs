@@ -5,6 +5,7 @@ use std::rc::Rc;
 use niri_config::utils::MergeWith as _;
 use niri_config::{Color, CornerRadius, GradientInterpolation};
 use niri_ipc::WindowLayout;
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::element::{Element, Kind};
 use smithay::backend::renderer::gles::{GlesRenderer, Uniform};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
@@ -37,6 +38,7 @@ use crate::utils::transaction::Transaction;
 use crate::utils::{
     baba_is_float_offset, round_logical_in_physical, round_logical_in_physical_max1,
 };
+use crate::window_throw::{self, Hit, Wobble};
 
 /// Toplevel window with decorations.
 #[derive(Debug)]
@@ -107,6 +109,17 @@ pub struct Tile<W: LayoutElement> {
     /// Offset during the initial interactive move rubberband.
     pub(super) interactive_move_offset: Point<f64, Logical>,
 
+    /// angel-niri (window_throw.rs): squashing against the edge a throw hit.
+    squash: Option<(Animation, Hit)>,
+
+    /// angel-niri (window_throw.rs): lagging behind the pointer while dragged, and where the
+    /// pointer holds it (ratio of the tile size) for the stretch.
+    wobble: Option<Wobble>,
+    wobble_grab: (f64, f64),
+
+    /// angel-niri (window_throw.rs): the tile drawn once more to be squashed or stretched.
+    deform_offscreen: OffscreenBuffer,
+
     /// Snapshot of the last render for use in the close animation.
     unmap_snapshot: Option<TileRenderSnapshot>,
 
@@ -140,6 +153,7 @@ niri_render_elements! {
         Dim = ShaderRenderElement,
         ClippedSurface = ClippedSurfaceRenderElement<R>,
         Offscreen = OffscreenRenderElement,
+        Deform = RescaleRenderElement<OffscreenRenderElement>,
         ExtraDamage = ExtraDamage,
         BackgroundEffect = BackgroundEffectElement,
     }
@@ -223,6 +237,10 @@ impl<W: LayoutElement> Tile<W> {
             move_y_animation: None,
             alpha_animation: None,
             interactive_move_offset: Point::from((0., 0.)),
+            squash: None,
+            wobble: None,
+            wobble_grab: (0.5, 0.5),
+            deform_offscreen: OffscreenBuffer::default(),
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
             view_size,
@@ -461,6 +479,18 @@ impl<W: LayoutElement> Tile<W> {
                 self.alpha_animation = None;
             }
         }
+
+        if let Some((anim, _)) = &self.squash {
+            if anim.is_done() {
+                self.squash = None;
+            }
+        }
+
+        if let Some(wobble) = &mut self.wobble {
+            if !wobble.step(self.clock.now()) {
+                self.wobble = None;
+            }
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -476,6 +506,72 @@ impl<W: LayoutElement> Tile<W> {
                 .alpha_animation
                 .as_ref()
                 .is_some_and(|alpha| !alpha.anim.is_done())
+            || self.squash.is_some()
+            || self.wobble.is_some()
+    }
+
+    /// angel-niri (window_throw.rs): squashes the tile against the edge a throw hit.
+    pub fn squash(&mut self, hit: Hit) {
+        if window_throw::squash() <= 0. {
+            return;
+        }
+        let config = niri_config::Animation {
+            off: false,
+            kind: niri_config::animations::Kind::Spring(niri_config::animations::SpringParams {
+                damping_ratio: 0.45,
+                stiffness: 700,
+                epsilon: 0.001,
+            }),
+        };
+        self.squash = Some((Animation::new(self.clock.clone(), 1., 0., 0., config), hit));
+    }
+
+    /// angel-niri (window_throw.rs): the pointer dragging the tile moved by `delta`; `grab` is
+    /// where it holds the tile (ratio of its size).
+    pub fn wobble_pull(&mut self, delta: Point<f64, Logical>, grab: (f64, f64)) {
+        if window_throw::wobble() <= 0. {
+            self.wobble = None;
+            return;
+        }
+        let wobble = self.wobble.get_or_insert_with(|| {
+            let mut wobble = Wobble::default();
+            wobble.step(self.clock.now());
+            wobble
+        });
+        wobble.pull(delta);
+        self.wobble_grab = grab;
+    }
+
+    /// angel-niri (window_throw.rs): how far the tile lags behind the pointer dragging it.
+    pub fn wobble_offset(&self) -> Point<f64, Logical> {
+        self.wobble.map_or_else(Point::default, |wobble| wobble.offset)
+    }
+
+    /// angel-niri (window_throw.rs): the squash or stretch to draw the tile with: the (x, y)
+    /// scale and its origin in the tile, in whole pixels; `None` when it is drawn as is.
+    fn deform(&self) -> Option<(Scale<f64>, Point<f64, Logical>)> {
+        let size = self.animated_tile_size();
+        let ((sx, sy), origin) = if let Some((anim, hit)) = &self.squash {
+            let scale = window_throw::squash_scale(hit, anim.value());
+            let edge = |side: f64, len: f64| if side < 0. { 0. } else { len };
+            let origin = if hit.horizontal {
+                Point::from((edge(hit.side, size.w), size.h / 2.))
+            } else {
+                Point::from((size.w / 2., edge(hit.side, size.h)))
+            };
+            (scale, origin)
+        } else if let Some(wobble) = &self.wobble {
+            let (gx, gy) = self.wobble_grab;
+            (
+                wobble.stretch(size),
+                Point::from((size.w * gx, size.h * gy)),
+            )
+        } else {
+            return None;
+        };
+        let sx = window_throw::quantize(sx, size.w);
+        let sy = window_throw::quantize(sy, size.h);
+        (sx != 1. || sy != 1.).then(|| (Scale { x: sx, y: sy }, origin))
     }
 
     pub fn is_moving_between_workspaces(&self) -> bool {
@@ -614,6 +710,10 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         offset += self.interactive_move_offset;
+
+        if let Some(wobble) = &self.wobble {
+            offset += wobble.offset;
+        }
 
         offset
     }
@@ -1473,6 +1573,31 @@ impl<W: LayoutElement> Tile<W> {
                 }
                 Err(err) => {
                     warn!("error rendering tile to offscreen for alpha animation: {err:?}");
+                }
+            }
+        } else if let Some((deform, origin)) = self.deform() {
+            let mut ctx = ctx.as_gles();
+            let mut elements = Vec::new();
+            self.render_inner(
+                ctx.r(),
+                Point::new(0., 0.),
+                xray_pos,
+                focus_ring,
+                &mut |elem| elements.push(elem),
+            );
+            match self.deform_offscreen.render(ctx.renderer, scale, &elements) {
+                Ok((elem, _sync, data)) => {
+                    let offset = elem.offset();
+                    let elem = elem.with_alpha(tile_alpha).with_offset(location + offset);
+                    let origin = (location + origin).to_physical_precise_round(scale);
+                    let elem = RescaleRenderElement::from_element(elem, origin, deform);
+
+                    self.window().set_offscreen_data(Some(data));
+                    push(elem.into());
+                    pushed = true;
+                }
+                Err(err) => {
+                    warn!("error rendering tile to offscreen to squash it: {err:?}");
                 }
             }
         }

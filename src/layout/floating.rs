@@ -27,6 +27,7 @@ use crate::utils::{
     ensure_min_max_size_maybe_zero, ResizeEdge,
 };
 use crate::window::ResolvedWindowRules;
+use crate::window_throw::Throw;
 
 /// By how many logical pixels the directional move commands move floating windows.
 pub const DIRECTIONAL_MOVE_PX: f64 = 50.;
@@ -93,6 +94,9 @@ struct Data {
 
     /// Working area used for conversions.
     working_area: Rectangle<f64, Logical>,
+
+    /// angel-niri (window_throw.rs): the window flying after a throw.
+    throw: Option<Throw>,
 }
 
 impl Data {
@@ -106,6 +110,7 @@ impl Data {
             logical_pos: Point::default(),
             size: Size::default(),
             working_area,
+            throw: None,
         };
         rv.update(tile);
         rv.set_logical_pos(logical_pos);
@@ -252,6 +257,20 @@ impl<W: LayoutElement> FloatingSpace<W> {
             tile.advance_animations();
         }
 
+        let now = self.clock.now();
+        let area = self.working_area;
+        for (tile, data) in zip(&mut self.tiles, &mut self.data) {
+            let Some(mut throw) = data.throw else {
+                continue;
+            };
+            let (pos, hits, flying) = throw.step(now, data.logical_pos, data.size, area);
+            data.set_logical_pos(pos);
+            data.throw = flying.then_some(throw);
+            for hit in hits {
+                tile.squash(hit);
+            }
+        }
+
         self.closing_windows.retain_mut(|closing| {
             closing.advance_animations();
             closing.are_animations_ongoing()
@@ -259,11 +278,22 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
-        self.tiles.iter().any(Tile::are_animations_ongoing) || !self.closing_windows.is_empty()
+        self.tiles.iter().any(Tile::are_animations_ongoing)
+            || !self.closing_windows.is_empty()
+            || self.data.iter().any(|d| d.throw.is_some())
     }
 
     pub fn are_transitions_ongoing(&self) -> bool {
-        self.tiles.iter().any(Tile::are_transitions_ongoing) || !self.closing_windows.is_empty()
+        self.tiles.iter().any(Tile::are_transitions_ongoing)
+            || !self.closing_windows.is_empty()
+            || self.data.iter().any(|d| d.throw.is_some())
+    }
+
+    /// angel-niri (window_throw.rs): sends the window flying at `vel` logical px/s.
+    pub fn throw(&mut self, id: &W::Id, vel: Point<f64, Logical>) {
+        if let Some(idx) = self.idx_of(id) {
+            self.data[idx].throw = Some(Throw::new(vel, self.clock.now()));
+        }
     }
 
     pub fn update_render_elements(
@@ -926,6 +956,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     fn move_to(&mut self, idx: usize, new_pos: Point<f64, Logical>, animate: bool) {
+        self.data[idx].throw = None;
         if animate {
             self.move_and_animate(idx, new_pos);
         } else {

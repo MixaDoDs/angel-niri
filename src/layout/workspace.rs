@@ -2029,6 +2029,11 @@ impl<W: LayoutElement> Workspace<W> {
         &self.floating
     }
 
+    /// angel-niri (window_throw.rs): sends a floating window flying.
+    pub fn throw_floating(&mut self, id: &W::Id, vel: Point<f64, Logical>) {
+        self.floating.throw(id, vel);
+    }
+
     #[cfg(test)]
     pub fn verify_invariants(&self, move_win_id: Option<&W::Id>) {
         use approx::assert_abs_diff_eq;

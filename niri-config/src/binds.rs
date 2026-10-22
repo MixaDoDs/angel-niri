@@ -177,6 +177,9 @@ pub enum Action {
     #[knuffel(skip)]
     SetPixelShadow(f64),
     #[knuffel(skip)]
+    /// strength, bounce, squash, wobble
+    SetWindowThrow(f64, f64, f64, f64),
+    #[knuffel(skip)]
     /// look, app-id, image, cell, cover, background
     SetPrivacyLook(
         String,
@@ -502,6 +505,12 @@ impl From<niri_ipc::Action> for Action {
                 Self::SetPixelCorners(pixel, steps)
             }
             niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
+            niri_ipc::Action::SetWindowThrow {
+                strength,
+                bounce,
+                squash,
+                wobble,
+            } => Self::SetWindowThrow(strength, bounce, squash, wobble),
             niri_ipc::Action::SetInactiveDim { pixel, alpha } => Self::SetInactiveDim(pixel, alpha),
             niri_ipc::Action::SetPixelOverview { pixel, font } => {
                 Self::SetPixelOverview(pixel, font)

@@ -465,6 +465,8 @@ struct InteractiveMoveData<W: LayoutElement> {
     /// config overrides for the workspace where the move originated from. As soon as the window
     /// moves over some different workspace though, this override will reset.
     pub(self) workspace_config: Option<(WorkspaceId, niri_config::LayoutPart)>,
+    /// angel-niri (window_throw.rs): the pointer's speed, for a throw on release.
+    pub(self) velocity: crate::window_throw::Velocity,
 }
 
 #[derive(Debug)]
@@ -4123,7 +4125,10 @@ impl<W: LayoutElement> Layout<W> {
                     pointer_ratio_within_window,
                     output_config,
                     workspace_config,
+                    velocity: Default::default(),
                 };
+                data.velocity
+                    .add(self.clock.now(), data.pointer_pos_within_output);
 
                 if let Some((tile_pos, zoom)) = tile_pos {
                     let new_tile_pos = data.tile_render_location(zoom);
@@ -4181,6 +4186,19 @@ impl<W: LayoutElement> Layout<W> {
                         .with_merged_layout(move_.workspace_config.as_ref().map(|(_, c)| c))
                         .adjusted_for_scale(scale);
                     move_.tile.update_config(view_size, scale, Rc::new(options));
+                }
+
+                // angel-niri (window_throw.rs): a floating window lags behind and gathers speed.
+                if move_.is_floating && !self.overview_open && !update_config {
+                    let delta = pointer_pos_within_output - move_.pointer_pos_within_output;
+                    move_
+                        .tile
+                        .wobble_pull(delta, move_.pointer_ratio_within_window);
+                    move_
+                        .velocity
+                        .add(self.clock.now(), pointer_pos_within_output);
+                } else {
+                    move_.velocity.reset();
                 }
 
                 move_.pointer_pos_within_output = pointer_pos_within_output;
@@ -4266,6 +4284,13 @@ impl<W: LayoutElement> Layout<W> {
 
         // Dragging in the overview shouldn't switch the workspace and so on.
         let allow_to_activate_workspace = !self.overview_open;
+
+        // angel-niri (window_throw.rs): a floating window let go mid-drag flies on.
+        let throw = if move_.is_floating && !self.overview_open {
+            move_.velocity.throw(self.clock.now())
+        } else {
+            None
+        };
 
         match &mut self.monitor_set {
             MonitorSet::Normal {
@@ -4375,7 +4400,11 @@ impl<W: LayoutElement> Layout<W> {
                         match insert_ws {
                             InsertWorkspace::Existing(_) => {
                                 if let Some(offset) = offset {
-                                    let pos = (tile_render_loc - offset).downscale(zoom);
+                                    // angel-niri (window_throw.rs): it lands where the pointer
+                                    // holds it; the sway goes on from where it's drawn.
+                                    let land = tile_render_loc
+                                        - tile.wobble_offset().upscale(zoom);
+                                    let pos = (land - offset).downscale(zoom);
                                     let pos =
                                         mon.workspaces[ws_idx].floating_logical_to_size_frac(pos);
                                     tile.floating_pos = Some(pos);
@@ -4433,6 +4462,12 @@ impl<W: LayoutElement> Layout<W> {
                 // awkwardly sit unclipped for a moment before the animation runs out.
                 if !matches!(position, InsertPosition::Floating) {
                     tile.set_anim_y_between_workspaces();
+                }
+
+                if let Some(vel) = throw {
+                    if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.has_window(&win_id)) {
+                        ws.throw_floating(&win_id, vel);
+                    }
                 }
             }
             MonitorSet::NoOutputs { workspaces, .. } => {

@@ -927,6 +927,9 @@ impl State {
                 crate::inactive_dim::set(pixel as f32, alpha as f32);
                 self.niri.queue_redraw_all();
             }
+            Action::SetWindowThrow(strength, bounce, squash, wobble) => {
+                crate::window_throw::set(strength, bounce, squash, wobble);
+            }
             Action::SetPixelShadow(pixel) => {
                 crate::pixel_shadow::set(pixel as f32);
                 // the window rules don't change, so their tiles are told directly

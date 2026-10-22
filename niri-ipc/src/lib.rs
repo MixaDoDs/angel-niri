@@ -406,6 +406,31 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Throw floating windows (angel-niri).
+    ///
+    /// A floating window let go of mid-drag keeps flying with the pointer's speed × `strength`
+    /// and slows down inside its output; it bounces off the edges with `bounce` of its speed and
+    /// squashes against them by `squash`; while dragged, it lags and sways like jelly by `wobble`.
+    /// 0 turns each off.
+    #[cfg_attr(feature = "clap", clap(about = "Throw floating windows"))]
+    SetWindowThrow {
+        /// How far a window flies: 0 off, 0.3 barely slides, 2 crosses the screen.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_one")]
+        strength: f64,
+        /// How much speed a window keeps bouncing off an edge, 0 to 0.95 (0: it stops there).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 0.5))]
+        #[serde(default = "default_throw_bounce")]
+        bounce: f64,
+        /// How much a window squashes hitting an edge, 0 to 2.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_one")]
+        squash: f64,
+        /// How much a dragged window lags and sways, 0 to 2.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_one")]
+        wobble: f64,
+    },
     /// Dim inactive windows with a sparse grid of dark dots (angel-niri).
     ///
     /// Every window but the focused one gets one dot of `pixel` logical pixels in every two by two,
@@ -2406,6 +2431,14 @@ fn default_pixel_steps() -> u32 {
 }
 
 fn default_dim_alpha() -> f64 {
+    0.5
+}
+
+fn default_one() -> f64 {
+    1.
+}
+
+fn default_throw_bounce() -> f64 {
     0.5
 }
 
