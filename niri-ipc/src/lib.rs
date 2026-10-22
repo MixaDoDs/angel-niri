@@ -321,8 +321,8 @@ pub enum Action {
     },
     /// Give windows pixel staircase corners (angel-niri).
     ///
-    /// A window without a corner radius of its own gets `steps` steps of `pixel` logical pixels;
-    /// corners are drawn with hard edges, the border too. 0 turns it off.
+    /// A window whose rules ask for square corners (radius 0) gets `steps` steps of `pixel`
+    /// logical pixels; corners are drawn with hard edges, the border too. 0 turns it off.
     #[cfg_attr(feature = "clap", clap(about = "Set pixel staircase window corners"))]
     SetPixelCorners {
         /// The staircase's pixel in logical pixels; 0 to turn it off.

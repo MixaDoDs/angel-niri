@@ -325,13 +325,10 @@ impl ResolvedWindowRules {
 
             resolved.open_on_output = open_on_output.map(|x| x.to_owned());
 
-            // angel-niri (pixel_corners.rs): no radius of its own → the staircase's
+            // angel-niri (pixel_corners.rs): a square corner asked for (radius 0) → the
+            // staircase's; a window no rule gives a radius (a shell's own pixel boxes) stays
             let radius = crate::pixel_corners::default_radius();
-            if radius > 0.
-                && resolved
-                    .geometry_corner_radius
-                    .is_none_or(|r| r == CornerRadius::default())
-            {
+            if radius > 0. && resolved.geometry_corner_radius == Some(CornerRadius::default()) {
                 resolved.geometry_corner_radius = Some(CornerRadius::from(radius));
             }
             resolved.open_on_workspace = open_on_workspace.map(|x| x.to_owned());
