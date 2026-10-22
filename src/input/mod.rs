@@ -919,6 +919,10 @@ impl State {
                 self.niri.refresh_window_rules();
                 self.niri.queue_redraw_all();
             }
+            Action::SetPixelOverview(pixel, steps, font) => {
+                crate::pixel_overview::set(pixel as f32, steps, font);
+                self.niri.queue_redraw_all();
+            }
             Action::SetPixelShadow(pixel) => {
                 crate::pixel_shadow::set(pixel as f32);
                 // the window rules don't change, so their tiles are told directly

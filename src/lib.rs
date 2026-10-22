@@ -20,6 +20,7 @@ pub mod layout;
 pub mod minimize;
 pub mod niri;
 pub mod pixel_corners;
+pub mod pixel_overview;
 pub mod pixel_shadow;
 pub mod privacy_look;
 pub mod protocols;

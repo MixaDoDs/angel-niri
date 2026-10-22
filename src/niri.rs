@@ -4514,6 +4514,13 @@ impl Niri {
 
         self.fill_xray_elements(ctx.as_gles(), output);
 
+        // angel-niri (pixel_overview.rs): sharp thumbnails while this output's overview shows
+        let overview = self
+            .layout
+            .monitor_for_output(output)
+            .is_some_and(|mon| mon.overview_clamped_progress().is_some());
+        crate::pixel_overview::set_filter(ctx.renderer.as_gles_renderer(), overview);
+
         // Reborrow to shorten lifetime to be able to put in xray.
         let mut ctx = ctx.r();
         let state = self.output_state.get(output).unwrap();
@@ -4767,6 +4774,19 @@ impl Niri {
 
                 process!(geo)(ws.render_background());
             }
+        }
+
+        // angel-niri (pixel_overview.rs): the workspaces' pixel frames and names
+        {
+            let focus_ring = self.config.borrow().layout.focus_ring;
+            crate::pixel_overview::render(
+                ctx.renderer,
+                mon,
+                &output.name(),
+                focus_ring.active_color,
+                focus_ring.inactive_color,
+                push,
+            );
         }
 
         mon.render_workspace_shadows(ctx.renderer, &mut |elem| push(elem.into()));

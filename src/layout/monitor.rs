@@ -266,7 +266,8 @@ impl InsertWorkspace {
 impl OverviewProgress {
     pub fn value(&self) -> f64 {
         match self {
-            OverviewProgress::Animation(anim) => anim.value(),
+            // angel-niri (pixel_overview.rs): in steps while it is on
+            OverviewProgress::Animation(anim) => crate::pixel_overview::step(anim.value()),
             OverviewProgress::Value(v) => *v,
         }
     }
@@ -1851,6 +1852,11 @@ impl<W: LayoutElement> Monitor<W> {
                 }
             }
         }
+    }
+
+    /// angel-niri (pixel_overview.rs): how far the overview is open, if at all.
+    pub fn overview_clamped_progress(&self) -> Option<f64> {
+        self.overview_progress.as_ref().map(|p| p.clamped_value())
     }
 
     pub fn render_workspace_shadows<R: NiriRenderer>(
