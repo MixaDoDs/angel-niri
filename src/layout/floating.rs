@@ -1089,7 +1089,14 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let active = self.active_window_id.clone();
         for (tile, tile_pos) in self.tiles_with_render_positions() {
             // Skip tiles belonging to a different render layer.
-            if layer.is_normal() == tile.is_moving_between_workspaces() {
+            let tile_layer = if tile.is_moving_between_workspaces() {
+                RenderLayer::MovingBetweenWorkspaces
+            } else if tile.window().is_behind_scene() {
+                RenderLayer::BehindScene
+            } else {
+                RenderLayer::Normal
+            };
+            if tile_layer != layer {
                 continue;
             }
 

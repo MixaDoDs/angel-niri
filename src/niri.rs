@@ -884,6 +884,7 @@ impl State {
         self.niri.global_space.refresh();
         self.niri.refresh_idle_inhibit();
         self.refresh_pointer_contents();
+        self.niri.refresh_behind_scene();
         foreign_toplevel::refresh(self);
         ext_workspace::refresh(self);
         self.refresh_image_copy_capture();
@@ -4750,6 +4751,15 @@ impl Niri {
                 let ns = Some(ws.id().get() as usize);
                 let xray_pos = XrayPos::new(geo.loc, zoom);
                 push_normal_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
+            }
+
+            // angel-niri (scene.rs): windows behind the scene, between the bottom and background
+            // layers (workspaces don't overlap, so all of them here keeps each one's order).
+            mon.render_workspaces_behind_scene(ctx.r(), &mut |elem| push(elem.into()));
+
+            for (ws, geo) in mon.workspaces_with_render_geo() {
+                let ns = Some(ws.id().get() as usize);
+                let xray_pos = XrayPos::new(geo.loc, zoom);
                 push_normal_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
 
                 process!(geo)(ws.render_background());

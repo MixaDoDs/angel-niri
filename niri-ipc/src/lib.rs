@@ -319,6 +319,24 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Draw a floating window behind a layered wallpaper's nearer things (angel-niri).
+    ///
+    /// The window goes under the bottom layer-shell layer, where a shell draws the scene's
+    /// nearer layers again; the pointer over it brings it forward. Only while it is floating in
+    /// its normal size and the overview is closed.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Put a window behind the wallpaper scene")
+    )]
+    SetWindowBehindScene {
+        /// Id of the window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: u64,
+        /// Behind (`true`, the default) or back to normal.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        behind: bool,
+    },
     /// Minimize a window: take it out of the layout until it is focused again.
     #[cfg_attr(feature = "clap", clap(about = "Minimize the focused window"))]
     MinimizeWindow {

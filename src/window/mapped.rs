@@ -100,6 +100,11 @@ pub struct Mapped {
     /// angel-niri: whether this window is minimized (kept out of the layout).
     is_minimized: bool,
 
+    /// angel-niri (scene.rs): marked to stand behind a wallpaper scene's nearer things, and
+    /// whether it is drawn so now.
+    behind_scene: bool,
+    render_behind_scene: bool,
+
     /// Whether this window is a target of a window cast.
     is_window_cast_target: bool,
 
@@ -293,6 +298,8 @@ impl Mapped {
             is_active_in_column: true,
             is_floating: false,
             is_minimized: false,
+            behind_scene: false,
+            render_behind_scene: false,
             is_window_cast_target: false,
             ignore_opacity_window_rule: false,
             block_out_buffer: RefCell::new(SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.])),
@@ -618,6 +625,21 @@ impl Mapped {
 
     pub fn is_minimized(&self) -> bool {
         self.is_minimized
+    }
+
+    pub fn behind_scene(&self) -> bool {
+        self.behind_scene
+    }
+
+    pub fn set_behind_scene(&mut self, behind: bool) {
+        self.behind_scene = behind;
+    }
+
+    /// Returns whether it changed.
+    pub fn set_render_behind_scene(&mut self, behind: bool) -> bool {
+        let changed = self.render_behind_scene != behind;
+        self.render_behind_scene = behind;
+        changed
     }
 }
 
@@ -1004,6 +1026,10 @@ impl LayoutElement for Mapped {
 
     fn is_minimized(&self) -> bool {
         self.is_minimized
+    }
+
+    fn is_behind_scene(&self) -> bool {
+        self.render_behind_scene
     }
 
     fn set_activated(&mut self, active: bool) {

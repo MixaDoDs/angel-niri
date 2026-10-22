@@ -1682,12 +1682,32 @@ impl<W: LayoutElement> Monitor<W> {
 
     pub fn render_workspaces<R: NiriRenderer>(
         &self,
-        mut ctx: RenderCtx<R>,
+        ctx: RenderCtx<R>,
         focus_ring: bool,
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
         let _span = tracy_client::span!("Monitor::render_workspaces");
 
+        self.render_workspaces_passes(ctx, focus_ring, &[0, 1, 2, 3], push);
+    }
+
+    /// angel-niri (scene.rs): the floating windows drawn behind a wallpaper scene's nearer
+    /// things, under the bottom layer-shell layer.
+    pub fn render_workspaces_behind_scene<R: NiriRenderer>(
+        &self,
+        ctx: RenderCtx<R>,
+        push: &mut dyn FnMut(MonitorRenderElement<R>),
+    ) {
+        self.render_workspaces_passes(ctx, false, &[4], push);
+    }
+
+    fn render_workspaces_passes<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        focus_ring: bool,
+        passes: &[u8],
+        push: &mut dyn FnMut(MonitorRenderElement<R>),
+    ) {
         let scale = self.scale.fractional_scale();
         // Ceil the height in physical pixels.
         let height = (self.view_size.h * scale).ceil() as i32;
@@ -1715,10 +1735,11 @@ impl<W: LayoutElement> Monitor<W> {
         // - normal floating windows
         // - scrolling windows moving between workspaces
         // - normal scrolling windows
-        for pass in 0..4 {
+        // (- 4, angel-niri: floating windows behind the scene, called on its own)
+        for pass in passes.iter().copied() {
             // Don't cull when drawing windows moving between workspaces so that windows moving to
             // workspaces off-screen will still render.
-            let cull = matches!(pass, 1 | 3);
+            let cull = matches!(pass, 1 | 3 | 4);
 
             // Crop the elements to prevent them overflowing, currently visible during a workspace
             // switch.
@@ -1793,6 +1814,15 @@ impl<W: LayoutElement> Monitor<W> {
                                 );
                             }
                         }
+                    }
+                    4 => {
+                        ws.render_floating(
+                            ctx.r(),
+                            xray_pos,
+                            false,
+                            RenderLayer::BehindScene,
+                            push!(),
+                        );
                     }
                     2 => {
                         ws.render_scrolling(

@@ -247,6 +247,10 @@ pub trait LayoutElement {
     fn is_urgent(&self) -> bool;
 
     /// angel-niri: tells the window it is minimized (out of the layout) or back.
+    /// angel-niri (scene.rs): drawn under the bottom layer-shell layer now.
+    fn is_behind_scene(&self) -> bool {
+        false
+    }
     fn set_minimized(&mut self, _minimized: bool) {}
     fn is_minimized(&self) -> bool {
         false
@@ -585,11 +589,13 @@ struct OverviewGesture {
 }
 
 /// Layer of windows to render.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenderLayer {
     Normal,
     /// Windows currently moving between workspaces.
     MovingBetweenWorkspaces,
+    /// angel-niri (scene.rs): floating windows drawn under the bottom layer-shell layer.
+    BehindScene,
 }
 
 impl SizingMode {

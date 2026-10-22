@@ -1682,7 +1682,7 @@ impl<W: LayoutElement> Workspace<W> {
         layer: RenderLayer,
         push: &mut dyn FnMut(WorkspaceRenderElement<R>),
     ) {
-        if !self.is_floating_visible() && layer.is_normal() {
+        if !self.is_floating_visible() && layer != RenderLayer::MovingBetweenWorkspaces {
             return;
         }
 
