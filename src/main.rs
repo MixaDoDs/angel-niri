@@ -281,6 +281,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(None, &mut state, |state| state.refresh_and_flush_clients())
         .unwrap();
 
+    // angel-niri (remember.rs): the windows still open when niri quits
+    state.niri.remember_all();
+
     Ok(())
 }
 

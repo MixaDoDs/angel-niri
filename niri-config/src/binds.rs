@@ -157,6 +157,12 @@ pub enum Action {
     #[knuffel(skip)]
     SetTearing(bool, Option<String>),
     #[knuffel(skip)]
+    SetPointerLock(bool, Option<String>),
+    #[knuffel(skip)]
+    SetRememberWindows(bool),
+    #[knuffel(skip)]
+    SetCastPause(bool, Option<String>, Option<String>),
+    #[knuffel(skip)]
     SetWindowBehindScene(u64, bool),
     #[knuffel(skip)]
     SetCastOnlyLayer(String, bool),
@@ -471,6 +477,13 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::CloseWindow { id: None } => Self::CloseWindow,
             niri_ipc::Action::CloseWindow { id: Some(id) } => Self::CloseWindowById(id),
             niri_ipc::Action::SetTearing { on, output } => Self::SetTearing(on, output),
+            niri_ipc::Action::SetPointerLock { on, output } => Self::SetPointerLock(on, output),
+            niri_ipc::Action::SetRememberWindows { on } => Self::SetRememberWindows(on),
+            niri_ipc::Action::SetCastPause {
+                on,
+                image,
+                background,
+            } => Self::SetCastPause(on, image, background),
             niri_ipc::Action::SetBackgroundFps { fps, output } => {
                 Self::SetBackgroundFps(fps, output)
             }

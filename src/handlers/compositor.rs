@@ -119,6 +119,12 @@ impl CompositorHandler for State {
                             .as_deref()
                             .and_then(|n| self.niri.layout.find_workspace_by_name(n))
                             .map(|(_, ws)| ws.id());
+                        // angel-niri (remember.rs): a workspace by index, if still there
+                        let remembered = self.niri.remember.targets.remove(surface);
+                        let workspace_id = workspace_id.or_else(|| {
+                            remembered
+                                .filter(|id| self.niri.layout.find_workspace_by_id(*id).is_some())
+                        });
 
                         (
                             rules,
@@ -271,6 +277,9 @@ impl CompositorHandler for State {
                 // Must start the close animation before window.on_commit().
                 let transaction = Transaction::new();
                 if !is_mapped {
+                    // angel-niri (remember.rs): its size as it was shown
+                    self.niri.remember_window(surface);
+
                     let blocker = transaction.blocker();
                     self.backend.with_primary_renderer(|renderer| {
                         self.niri

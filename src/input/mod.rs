@@ -959,6 +959,20 @@ impl State {
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }
+            Action::SetCastPause(on, image, background) => {
+                if let Err(err) =
+                    crate::cast_pause::set(on, image.as_deref(), background.as_deref())
+                {
+                    warn!("error setting the cast pause: {err:?}");
+                }
+                self.niri.queue_redraw_all();
+            }
+            Action::SetRememberWindows(on) => {
+                self.niri.set_remember_windows(on);
+            }
+            Action::SetPointerLock(on, output) => {
+                self.niri.set_pointer_lock(on, output);
+            }
             Action::SetTearing(on, output) => {
                 self.niri.set_tearing(on, output);
                 self.niri.queue_redraw_all();
@@ -2700,6 +2714,21 @@ impl State {
                     new_pos.x = new_pos.x.clamp(geo.loc.x, geo.loc.x + geo.size.w - 1.);
                     new_pos.y = (new_pos.y - geo.loc.y).rem_euclid(geo.size.h) + geo.loc.y;
                 }
+            }
+        }
+
+        // angel-niri (game.rs): the pointer stays on a fullscreen game's output; Mod lets it go
+        if let Some(geo) = self.niri.pointer_lock_geometry() {
+            let mod_key = self.backend.mod_key(&self.niri.config.borrow());
+            let mods =
+                modifiers_from_state(self.niri.seat.get_keyboard().unwrap().modifier_state());
+            if geo.to_f64().contains(pos) && !mods.contains(mod_key.to_modifiers()) {
+                new_pos.x = new_pos
+                    .x
+                    .clamp(geo.loc.x as f64, (geo.loc.x + geo.size.w - 1) as f64);
+                new_pos.y = new_pos
+                    .y
+                    .clamp(geo.loc.y as f64, (geo.loc.y + geo.size.h - 1) as f64);
             }
         }
 

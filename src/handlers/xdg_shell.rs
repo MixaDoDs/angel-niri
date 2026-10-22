@@ -893,6 +893,8 @@ impl XdgShellHandler for State {
             .is_some()
         {
             // An unmapped toplevel got destroyed.
+            self.niri.remember.targets.remove(surface.wl_surface());
+            self.niri.remember.app_ids.remove(surface.wl_surface());
             return;
         }
 
@@ -928,6 +930,8 @@ impl XdgShellHandler for State {
         let id = mapped.id();
         self.niri
             .stop_casts_for_target(CastTarget::Window { id: id.get() });
+        // angel-niri (remember.rs)
+        self.niri.remember_window(surface.wl_surface());
 
         self.store_unmap_snapshot(&window, output.as_ref());
 
@@ -1111,10 +1115,17 @@ impl State {
         };
 
         let config = self.niri.config.borrow();
-        let rules = ResolvedWindowRules::compute(
+        let mut rules = ResolvedWindowRules::compute(
             &config.window_rules,
             WindowRef::Unmapped(unmapped),
             self.niri.is_at_startup,
+        );
+        // angel-niri (remember.rs): where its program's last window was
+        let remembered_ws = crate::remember::apply(
+            &mut self.niri.remember,
+            &self.niri.layout,
+            &mut rules,
+            toplevel,
         );
 
         let Unmapped { window, state, .. } = unmapped;
@@ -1257,6 +1268,14 @@ impl State {
 
         trace!(surface = %toplevel.wl_surface().id(), "sending initial configure");
         toplevel.send_configure();
+
+        drop(config);
+        if let Some(id) = remembered_ws {
+            self.niri
+                .remember
+                .targets
+                .insert(toplevel.wl_surface().clone(), id);
+        }
     }
 
     pub fn queue_initial_configure(&self, toplevel: ToplevelSurface) {

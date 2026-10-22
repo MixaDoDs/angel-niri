@@ -104,3 +104,61 @@ fn tearing_only_for_a_fullscreen_game() {
     f.niri().set_tearing(false, None);
     assert!(!f.niri().tearing_now(&game), "tearing stays on after off");
 }
+
+// angel-niri (game.rs): the pointer stays on the game's output only while its fullscreen game has
+// the focus.
+#[test]
+fn pointer_lock_only_for_a_focused_fullscreen_game() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.add_output(2, (1920, 1080));
+    f.niri_focus_output(1);
+
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.commit();
+    f.roundtrip(id);
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(100, 100);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    f.niri()
+        .set_pointer_lock(true, Some("headless-1".to_owned()));
+    assert!(
+        f.niri().pointer_lock_geometry().is_none(),
+        "a window not fullscreen keeps the pointer"
+    );
+
+    let window_id = f.niri().layout.windows().next().unwrap().1.window.clone();
+    f.niri().layout.set_fullscreen(&window_id, true);
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&surface);
+    window.set_size(1920, 1080);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    f.niri_complete_animations();
+    let game = f.niri_output(1);
+    let geo = f.niri().global_space.output_geometry(&game);
+    assert!(geo.is_some());
+    assert_eq!(
+        f.niri().pointer_lock_geometry(),
+        geo,
+        "the focused fullscreen game doesn't keep the pointer"
+    );
+
+    f.niri_focus_output(2);
+    assert!(
+        f.niri().pointer_lock_geometry().is_none(),
+        "the pointer is kept after the focus left the game"
+    );
+
+    f.niri_focus_output(1);
+    f.niri().set_pointer_lock(false, None);
+    assert!(
+        f.niri().pointer_lock_geometry().is_none(),
+        "the lock stays on after off"
+    );
+}

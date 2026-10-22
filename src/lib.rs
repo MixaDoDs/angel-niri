@@ -6,6 +6,7 @@ pub mod a11y;
 pub mod animation;
 pub mod backend;
 pub mod cast_only;
+pub mod cast_pause;
 pub mod cli;
 pub mod cursor;
 #[cfg(feature = "dbus")]
@@ -25,6 +26,7 @@ pub mod pixel_overview;
 pub mod pixel_shadow;
 pub mod privacy_look;
 pub mod protocols;
+pub mod remember;
 pub mod render_helpers;
 pub mod rubber_band;
 pub mod scene;

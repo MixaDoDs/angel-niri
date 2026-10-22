@@ -339,6 +339,59 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Show screencasts a pause card instead of the screen (angel-niri).
+    ///
+    /// Every screencast shows the picture centred on the background, without the pointer, until
+    /// it is off again; the monitor goes on as it is.
+    #[cfg_attr(feature = "clap", clap(about = "Pause what screencasts show"))]
+    SetCastPause {
+        /// Paused (`true`, the default) or live again.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+        /// A PNG for the card.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        image: Option<String>,
+        /// The card's background, #rrggbb or #rrggbbaa (black by default).
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        background: Option<String>,
+    },
+    /// Open a program's windows where its last one was (angel-niri).
+    ///
+    /// When a window closes, its program's output, workspace and size (and a floating one's
+    /// position) are remembered; its next window opens there, unless window rules say otherwise.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Open windows where their program's last one was")
+    )]
+    SetRememberWindows {
+        /// Remember (`true`, the default) or forget everything.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
+    /// Keep the pointer on a fullscreen game's output (angel-niri).
+    ///
+    /// While the fullscreen window on top of that output has the focus, the pointer doesn't leave
+    /// the output; holding Mod lets it go.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Keep the pointer on a fullscreen game's output")
+    )]
+    SetPointerLock {
+        /// Locked (`true`, the default) or free.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+        /// The game's output.
+        ///
+        /// If `None`, the active output at the moment of the call.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        output: Option<String>,
+    },
     /// Dim inactive windows with a sparse grid of dark dots (angel-niri).
     ///
     /// Every window but the focused one gets one dot of `pixel` logical pixels in every two by two,

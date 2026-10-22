@@ -14,11 +14,17 @@
 //! only the primary plane's buffer — the game scanned out, or composited with nothing else moving —
 //! is flipped at once instead of at the next vblank (angel-smithay's async flips): less input lag,
 //! at the price of tearing. The desktop never tears.
+//!
+//! `niri msg action set-pointer-lock --output GAME [--on false]` (the same script): while the
+//! fullscreen window on top of the game's output has the focus, the pointer doesn't leave that
+//! output — a quick flick no longer lands on the other screen and clicks the desktop there. Holding
+//! Mod lets it out; the game keeps the focus.
 
 use std::time::Duration;
 
 use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::utils::{Logical, Rectangle};
 
 use crate::niri::{CastTarget, Niri};
 use crate::utils::get_monotonic_time;
@@ -39,6 +45,27 @@ impl Niri {
         self.tearing_output = on
             .then(|| output.or_else(|| self.layout.active_output().map(|o| o.name())))
             .flatten();
+    }
+
+    /// `output`: the game's; none given, the active one now.
+    pub fn set_pointer_lock(&mut self, on: bool, output: Option<String>) {
+        self.pointer_lock_output = on
+            .then(|| output.or_else(|| self.layout.active_output().map(|o| o.name())))
+            .flatten();
+    }
+
+    /// The game's output while the fullscreen window on top of it has the focus: the pointer
+    /// stays there.
+    pub fn pointer_lock_geometry(&self) -> Option<Rectangle<i32, Logical>> {
+        let name = self.pointer_lock_output.as_deref()?;
+        let output = self.global_space.outputs().find(|o| o.name() == name)?;
+        let game = self
+            .layout
+            .monitor_for_output(output)?
+            .fullscreen_window_above_top_layer()?;
+        (self.layout.focus()?.id() == game.id())
+            .then(|| self.global_space.output_geometry(output))
+            .flatten()
     }
 
     /// Whether `output`'s frames may tear now: it is the game's and shows a fullscreen window.

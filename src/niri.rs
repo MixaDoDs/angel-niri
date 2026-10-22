@@ -267,6 +267,10 @@ pub struct Niri {
     pub background_keep: Option<String>,
     /// angel-niri: the game's output, whose fullscreen frames may tear (game.rs).
     pub tearing_output: Option<String>,
+    /// angel-niri: the game's output, which keeps the pointer while its game has the focus.
+    pub pointer_lock_output: Option<String>,
+    /// angel-niri: where programs' windows were (remember.rs).
+    pub remember: crate::remember::Remember,
 
     /// Layer surfaces which don't have a buffer attached yet.
     pub unmapped_layer_surfaces: HashSet<WlSurface>,
@@ -2806,6 +2810,8 @@ impl Niri {
             background_fps: None,
             background_keep: None,
             tearing_output: None,
+            pointer_lock_output: None,
+            remember: crate::remember::Remember::load(),
             unmapped_layer_surfaces: HashSet::new(),
             mapped_layer_surfaces: HashMap::new(),
             root_surface: HashMap::new(),

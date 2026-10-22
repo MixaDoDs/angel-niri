@@ -11,6 +11,7 @@ mod floating;
 mod fullscreen;
 mod game;
 mod layer_shell;
+mod remember;
 mod remove_output;
 mod transactions;
 mod virtual_pointer;

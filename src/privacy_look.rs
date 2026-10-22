@@ -139,7 +139,7 @@ pub fn set(
     Ok(())
 }
 
-fn load_png(path: &str) -> anyhow::Result<Picture> {
+pub fn load_png(path: &str) -> anyhow::Result<Picture> {
     let mut decoder = png::Decoder::new(BufReader::new(File::open(path)?));
     decoder.set_transformations(
         png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16,
@@ -171,7 +171,7 @@ fn load_png(path: &str) -> anyhow::Result<Picture> {
     })
 }
 
-fn parse_color(hex: &str) -> Option<[f32; 4]> {
+pub fn parse_color(hex: &str) -> Option<[f32; 4]> {
     let hex = hex.strip_prefix('#').unwrap_or(hex);
     if !matches!(hex.len(), 6 | 8) || !hex.is_ascii() {
         return None;
@@ -291,91 +291,115 @@ pub fn render<R: NiriRenderer>(
             picture,
             cover,
             background,
-        } => {
-            let texture = TEXTURES.with_borrow_mut(|textures| {
-                let context = renderer.context_id();
-                if let Some((ctx, texture)) = textures.get(&picture.id) {
-                    if *ctx == context {
-                        return Some(texture.clone());
-                    }
-                }
-                let buffer = TextureBuffer::from_memory(
-                    renderer,
-                    &picture.rgba,
-                    Fourcc::Abgr8888,
-                    picture.size,
-                    false,
-                    1.,
-                    Transform::Normal,
-                    vec![],
-                )
-                .map_err(|err| warn!("error importing the privacy picture: {err:?}"))
-                .ok()?;
-                let texture = buffer.texture().clone();
-                textures.insert(picture.id, (context, texture.clone()));
-                Some(texture)
-            })?;
-
-            if cache
-                .picture
-                .as_ref()
-                .is_none_or(|(id, _)| *id != picture.id)
-            {
-                let buffer =
-                    TextureBuffer::from_texture(renderer, texture, 1., Transform::Normal, vec![]);
-                cache.picture = Some((picture.id, buffer));
-            }
-            let (_, buffer) = cache.picture.as_ref()?;
-
-            let pic = picture.size.to_f64();
-            let elem = if *cover {
-                // Fill the window, cut what sticks out evenly on both sides.
-                let s = f64::max(size.w / pic.w, size.h / pic.h);
-                let src_size = Size::from((size.w / s, size.h / s));
-                let src_loc = Point::from(((pic.w - src_size.w) / 2., (pic.h - src_size.h) / 2.));
-                let elem = TextureRenderElement::from_texture_buffer(
-                    buffer.clone(),
-                    location,
-                    alpha,
-                    Some(Rectangle::new(src_loc, src_size)),
-                    Some(size),
-                    Kind::Unspecified,
-                );
-                PrivacyLookElement {
-                    inner: elem,
-                    sharp: false,
-                }
-            } else {
-                // Whole steps up to about 3/5 of the window; smaller if even one is too big.
-                let fit = f64::min(size.w * 0.6 / pic.w, size.h * 0.6 / pic.h);
-                let s = if fit >= 1. {
-                    fit.floor()
-                } else {
-                    f64::min(size.w / pic.w, size.h / pic.h).min(1.)
-                };
-                let drawn = Size::from((pic.w * s, pic.h * s));
-                let at = location
-                    + Point::from((
-                        ((size.w - drawn.w) / 2.).round(),
-                        ((size.h - drawn.h) / 2.).round(),
-                    ));
-                let elem = TextureRenderElement::from_texture_buffer(
-                    buffer.clone(),
-                    at,
-                    alpha,
-                    None,
-                    Some(drawn),
-                    Kind::Unspecified,
-                );
-                PrivacyLookElement {
-                    inner: elem,
-                    sharp: s >= 1.,
-                }
-            };
-            push(elem);
-            Some(*background)
-        }
+        } => render_picture(
+            renderer,
+            picture,
+            *cover,
+            *background,
+            cache,
+            size,
+            location,
+            alpha,
+            push,
+        ),
     }
+}
+
+/// Pushes a picture over `size` at `location` (an image look, the cast pause's card); returns its
+/// background colour for the caller to fill under it.
+#[allow(clippy::too_many_arguments)]
+pub fn render_picture(
+    renderer: &mut GlesRenderer,
+    picture: &Picture,
+    cover: bool,
+    background: [f32; 4],
+    cache: &mut WindowLook,
+    size: Size<f64, Logical>,
+    location: Point<f64, Logical>,
+    alpha: f32,
+    push: &mut dyn FnMut(PrivacyLookElement),
+) -> Option<[f32; 4]> {
+    let texture = TEXTURES.with_borrow_mut(|textures| {
+        let context = renderer.context_id();
+        if let Some((ctx, texture)) = textures.get(&picture.id) {
+            if *ctx == context {
+                return Some(texture.clone());
+            }
+        }
+        let buffer = TextureBuffer::from_memory(
+            renderer,
+            &picture.rgba,
+            Fourcc::Abgr8888,
+            picture.size,
+            false,
+            1.,
+            Transform::Normal,
+            vec![],
+        )
+        .map_err(|err| warn!("error importing the privacy picture: {err:?}"))
+        .ok()?;
+        let texture = buffer.texture().clone();
+        textures.insert(picture.id, (context, texture.clone()));
+        Some(texture)
+    })?;
+
+    if cache
+        .picture
+        .as_ref()
+        .is_none_or(|(id, _)| *id != picture.id)
+    {
+        let buffer = TextureBuffer::from_texture(renderer, texture, 1., Transform::Normal, vec![]);
+        cache.picture = Some((picture.id, buffer));
+    }
+    let (_, buffer) = cache.picture.as_ref()?;
+
+    let pic = picture.size.to_f64();
+    let elem = if cover {
+        // Fill the window, cut what sticks out evenly on both sides.
+        let s = f64::max(size.w / pic.w, size.h / pic.h);
+        let src_size = Size::from((size.w / s, size.h / s));
+        let src_loc = Point::from(((pic.w - src_size.w) / 2., (pic.h - src_size.h) / 2.));
+        let elem = TextureRenderElement::from_texture_buffer(
+            buffer.clone(),
+            location,
+            alpha,
+            Some(Rectangle::new(src_loc, src_size)),
+            Some(size),
+            Kind::Unspecified,
+        );
+        PrivacyLookElement {
+            inner: elem,
+            sharp: false,
+        }
+    } else {
+        // Whole steps up to about 3/5 of the window; smaller if even one is too big.
+        let fit = f64::min(size.w * 0.6 / pic.w, size.h * 0.6 / pic.h);
+        let s = if fit >= 1. {
+            fit.floor()
+        } else {
+            f64::min(size.w / pic.w, size.h / pic.h).min(1.)
+        };
+        let drawn = Size::from((pic.w * s, pic.h * s));
+        let at = location
+            + Point::from((
+                ((size.w - drawn.w) / 2.).round(),
+                ((size.h - drawn.h) / 2.).round(),
+            ));
+        let elem = TextureRenderElement::from_texture_buffer(
+            buffer.clone(),
+            at,
+            alpha,
+            None,
+            Some(drawn),
+            Kind::Unspecified,
+        );
+        PrivacyLookElement {
+            inner: elem,
+            sharp: s >= 1.,
+        }
+    };
+    push(elem);
+    Some(background)
 }
 
 /// A texture of a privacy look; sharp ones are drawn texel by texel (nearest.frag).

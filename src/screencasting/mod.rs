@@ -577,6 +577,12 @@ impl Niri {
             }
 
             if cursor_data.is_none() {
+                if let Some(card) = pause_card(renderer, size, scale) {
+                    elements = card;
+                    cursor_data = Some(CursorData::compute(&elements, 0, Point::default(), scale));
+                }
+            }
+            if cursor_data.is_none() {
                 let mut pointer_pos = Point::default();
                 if self.pointer_visibility.is_visible() {
                     let output_geo = self.global_space.output_geometry(output).unwrap().to_f64();
@@ -663,6 +669,20 @@ impl Niri {
             }
 
             if cast.check_time_and_schedule(output, target_presentation_time) {
+                continue;
+            }
+
+            if let Some(elements) = pause_card(renderer, bbox.size, scale) {
+                let cursor_data = CursorData::compute(&elements, 0, Point::default(), scale);
+                if cast.dequeue_buffer_and_render(
+                    renderer,
+                    &elements,
+                    &cursor_data,
+                    bbox.size,
+                    scale,
+                ) {
+                    cast.record_frame_time(target_presentation_time);
+                }
                 continue;
             }
 
@@ -801,5 +821,27 @@ niri_render_elements! {
         Window = WindowCastRenderElements<R>,
         Pointer = PointerRenderElements<R>,
         RelocatedPointer = RelocateRenderElement<PointerRenderElements<R>>,
+        PausePicture = crate::privacy_look::PrivacyLookElement,
+        PauseFill = crate::render_helpers::solid_color::SolidColorRenderElement,
     }
+}
+
+/// angel-niri (cast_pause.rs): the pause card instead of what a cast shows.
+fn pause_card<R>(
+    renderer: &mut GlesRenderer,
+    size: Size<i32, Physical>,
+    scale: Scale<f64>,
+) -> Option<Vec<CastRenderElement<R>>>
+where
+    R: crate::render_helpers::renderer::NiriRenderer,
+{
+    let card = crate::cast_pause::elements(renderer, size.to_f64().to_logical(scale))?;
+    Some(
+        card.into_iter()
+            .map(|elem| match elem {
+                crate::cast_pause::PauseElement::Picture(e) => CastRenderElement::PausePicture(e),
+                crate::cast_pause::PauseElement::Fill(e) => CastRenderElement::PauseFill(e),
+            })
+            .collect(),
+    )
 }
