@@ -358,6 +358,20 @@ pub enum Action {
         #[serde(default)]
         background: Option<String>,
     },
+    /// Play the window close animation when a window is minimized (angel-niri).
+    ///
+    /// For a shell that draws nothing of its own then (no flight into a dock): the window goes the
+    /// way a closing one does, and comes back with the open animation as always.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Play the close animation when a window is minimized")
+    )]
+    SetMinimizeFade {
+        /// Play it (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Open a program's windows where its last one was (angel-niri).
     ///
     /// When a window closes, its program's output, workspace and size (and a floating one's

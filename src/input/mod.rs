@@ -970,6 +970,9 @@ impl State {
             Action::SetRememberWindows(on) => {
                 self.niri.set_remember_windows(on);
             }
+            Action::SetMinimizeFade(on) => {
+                crate::minimize::set_fade(on);
+            }
             Action::SetPointerLock(on, output) => {
                 self.niri.set_pointer_lock(on, output);
             }

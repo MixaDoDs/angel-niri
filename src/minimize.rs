@@ -9,6 +9,7 @@
 //! answer in `HAND_OFF`: niri minimizes it itself.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -22,6 +23,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Rectangle, Scale, Transform};
 
 use crate::layout::workspace::WorkspaceId;
+use crate::utils::transaction::Transaction;
 use crate::layout::LayoutElement as _;
 use crate::niri::State;
 use crate::render_helpers::render_to_vec;
@@ -162,6 +164,26 @@ impl State {
     pub fn minimize_window(&mut self, window: &Window) {
         let was_active = self.niri.layout.focus().map(|m| &m.window) == Some(window);
 
+        // `set-minimize-fade`: it goes the way a closing window does
+        if fade() {
+            let output = self
+                .niri
+                .layout
+                .windows()
+                .find(|(_, m)| &m.window == window)
+                .and_then(|(mon, _)| mon.map(|mon| mon.output().clone()));
+            if output.is_some() {
+                self.store_unmap_snapshot(window, output.as_ref());
+                let transaction = Transaction::new();
+                let blocker = transaction.blocker();
+                self.backend.with_primary_renderer(|renderer| {
+                    self.niri
+                        .layout
+                        .start_close_animation_for_window(renderer, window, blocker);
+                });
+            }
+        }
+
         if let Some(mapped) = self
             .niri
             .layout
@@ -245,4 +267,15 @@ fn snapshot_path(id: u64) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     dir.join("niri-minimize").join(format!("{id}-{stamp}.png"))
+}
+
+static FADE: AtomicBool = AtomicBool::new(false);
+
+/// `set-minimize-fade`: whether a minimized window plays the close animation.
+pub fn set_fade(on: bool) {
+    FADE.store(on, Ordering::Relaxed);
+}
+
+fn fade() -> bool {
+    FADE.load(Ordering::Relaxed)
 }
