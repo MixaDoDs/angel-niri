@@ -360,6 +360,11 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspaces
     }
 
+    /// angel-niri (scene.rs): workspaces sliding by now (a switch, a gesture).
+    pub fn is_switching_workspaces(&self) -> bool {
+        self.workspace_switch.is_some()
+    }
+
     pub fn output(&self) -> &Output {
         &self.output
     }
@@ -1696,9 +1701,10 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn render_workspaces_behind_scene<R: NiriRenderer>(
         &self,
         ctx: RenderCtx<R>,
+        focus_ring: bool,
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
-        self.render_workspaces_passes(ctx, false, &[4], push);
+        self.render_workspaces_passes(ctx, focus_ring, &[4], push);
     }
 
     fn render_workspaces_passes<R: NiriRenderer>(
@@ -1819,7 +1825,7 @@ impl<W: LayoutElement> Monitor<W> {
                         ws.render_floating(
                             ctx.r(),
                             xray_pos,
-                            false,
+                            focus_ring,
                             RenderLayer::BehindScene,
                             push!(),
                         );
