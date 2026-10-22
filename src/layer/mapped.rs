@@ -192,6 +192,11 @@ impl MappedLayer {
         xray_pos: XrayPos,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
+        // angel-niri (cast_only.rs): a layer for the viewers only
+        if crate::cast_only::hides(self.surface.namespace(), ctx.target) {
+            return;
+        }
+
         let scale = Scale::from(self.scale);
         let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
 
@@ -263,6 +268,11 @@ impl MappedLayer {
         xray_pos: XrayPos,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
+        // angel-niri (cast_only.rs): a layer for the viewers only
+        if crate::cast_only::hides(self.surface.namespace(), ctx.target) {
+            return;
+        }
+
         if ctx.target.should_block_out(self.rules.block_out_from) {
             return;
         }

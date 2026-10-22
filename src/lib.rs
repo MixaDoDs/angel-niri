@@ -5,6 +5,7 @@ extern crate tracing;
 pub mod a11y;
 pub mod animation;
 pub mod backend;
+pub mod cast_only;
 pub mod cli;
 pub mod cursor;
 #[cfg(feature = "dbus")]

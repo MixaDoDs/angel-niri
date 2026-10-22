@@ -395,6 +395,23 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         behind: bool,
     },
+    /// Show a layer-shell namespace only to screencasts (angel-niri).
+    ///
+    /// Its surfaces are drawn into screencasts (OBS through the portal) but not on the monitor,
+    /// in screenshots or screencopy: overlays for a stream's viewers.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Show a layer namespace only in screencasts")
+    )]
+    SetCastOnlyLayer {
+        /// The layer-shell namespace.
+        #[cfg_attr(feature = "clap", arg(long))]
+        namespace: String,
+        /// Only in screencasts (`true`, the default) or everywhere again.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Minimize a window: take it out of the layout until it is focused again.
     #[cfg_attr(feature = "clap", clap(about = "Minimize the focused window"))]
     MinimizeWindow {

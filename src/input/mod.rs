@@ -944,6 +944,10 @@ impl State {
                 }
                 self.niri.queue_redraw_all();
             }
+            Action::SetCastOnlyLayer(namespace, on) => {
+                crate::cast_only::set(namespace, on);
+                self.niri.queue_redraw_all();
+            }
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }

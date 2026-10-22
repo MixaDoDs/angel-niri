@@ -157,6 +157,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetWindowBehindScene(u64, bool),
     #[knuffel(skip)]
+    SetCastOnlyLayer(String, bool),
+    #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
     SetPixelShadow(f64),
@@ -477,6 +479,9 @@ impl From<niri_ipc::Action> for Action {
                 Self::SetPixelCorners(pixel, steps)
             }
             niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
+            niri_ipc::Action::SetCastOnlyLayer { namespace, on } => {
+                Self::SetCastOnlyLayer(namespace, on)
+            }
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }
