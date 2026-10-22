@@ -79,6 +79,8 @@ impl Shaders {
                 UniformName::new("window_input_to_geo", UniformType::Matrix3x3),
                 UniformName::new("window_geo_size", UniformType::_2f),
                 UniformName::new("window_corner_radius", UniformType::_4f),
+                UniformName::new("niri_shadow_pixel", UniformType::_1f),
+                UniformName::new("niri_pixel", UniformType::_1f),
             ],
             &[],
         )

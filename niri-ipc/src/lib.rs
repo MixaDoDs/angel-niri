@@ -333,6 +333,16 @@ pub enum Action {
         #[serde(default = "default_pixel_steps")]
         steps: u32,
     },
+    /// Turn on pixel window shadows (angel-niri).
+    ///
+    /// Windows get the layout's shadow drawn as dithered dots of `pixel` logical pixels instead
+    /// of a smooth blur; its colours and softness stay the config's. 0 turns it off.
+    #[cfg_attr(feature = "clap", clap(about = "Set pixel dithered window shadows"))]
+    SetPixelShadow {
+        /// The dots' pixel in logical pixels; 0 to turn it off.
+        #[cfg_attr(feature = "clap", arg())]
+        pixel: f64,
+    },
     /// What a blocked-out window shows in screencasts instead of black (angel-niri).
     ///
     /// `black`; `mosaic`: the window in blocks of `cell` logical pixels, its popups hidden;

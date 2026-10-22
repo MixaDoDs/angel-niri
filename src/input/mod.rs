@@ -919,6 +919,18 @@ impl State {
                 self.niri.refresh_window_rules();
                 self.niri.queue_redraw_all();
             }
+            Action::SetPixelShadow(pixel) => {
+                crate::pixel_shadow::set(pixel as f32);
+                // the window rules don't change, so their tiles are told directly
+                let mut windows = vec![];
+                self.niri
+                    .layout
+                    .with_windows(|mapped, _, _, _| windows.push(mapped.window.clone()));
+                for win in windows {
+                    self.niri.layout.update_window(&win, None);
+                }
+                self.niri.queue_redraw_all();
+            }
             Action::SetPrivacyLook(look, app_id, image, cell, cover, background) => {
                 if let Err(err) = crate::privacy_look::set(
                     &look,

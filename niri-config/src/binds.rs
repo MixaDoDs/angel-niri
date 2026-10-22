@@ -159,6 +159,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
+    SetPixelShadow(f64),
+    #[knuffel(skip)]
     /// look, app-id, image, cell, cover, background
     SetPrivacyLook(
         String,
@@ -474,6 +476,7 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetPixelCorners { pixel, steps } => {
                 Self::SetPixelCorners(pixel, steps)
             }
+            niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }

@@ -36,6 +36,10 @@ struct Parameters {
 
     window_geometry: Rectangle<f64, Logical>,
     window_corner_radius: CornerRadius,
+
+    // angel-niri: pixel_shadow.rs's dots and pixel_corners.rs's staircase, 0 when off
+    pixel: f32,
+    corner_pixel: f32,
 }
 
 impl ShadowRenderElement {
@@ -64,6 +68,8 @@ impl ShadowRenderElement {
                 alpha,
                 window_geometry,
                 window_corner_radius,
+                pixel: crate::pixel_shadow::pixel(),
+                corner_pixel: crate::pixel_corners::pixel(),
             },
         };
         rv.update_inner();
@@ -84,6 +90,8 @@ impl ShadowRenderElement {
                 alpha: 1.,
                 window_geometry: Default::default(),
                 window_corner_radius: Default::default(),
+                pixel: 0.,
+                corner_pixel: 0.,
             },
         }
     }
@@ -115,6 +123,8 @@ impl ShadowRenderElement {
             scale,
             window_geometry,
             window_corner_radius,
+            pixel: crate::pixel_shadow::pixel(),
+            corner_pixel: crate::pixel_corners::pixel(),
         };
         if self.params == params {
             return;
@@ -135,6 +145,8 @@ impl ShadowRenderElement {
             scale,
             window_geometry,
             window_corner_radius,
+            pixel,
+            corner_pixel,
         } = self.params;
 
         let area_size = Vec2::new(size.w as f32, size.h as f32);
@@ -169,6 +181,8 @@ impl ShadowRenderElement {
                     "window_corner_radius",
                     <[f32; 4]>::from(window_corner_radius),
                 ),
+                Uniform::new("niri_shadow_pixel", pixel),
+                Uniform::new("niri_pixel", corner_pixel),
             ]),
             HashMap::new(),
         );

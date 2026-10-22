@@ -189,7 +189,8 @@ impl<W: LayoutElement> Tile<W> {
         let rules = window.rules();
         let border_config = options.layout.border.merged_with(&rules.border);
         let focus_ring_config = options.layout.focus_ring.merged_with(&rules.focus_ring);
-        let shadow_config = options.layout.shadow.merged_with(&rules.shadow);
+        let shadow_config =
+            crate::pixel_shadow::over(options.layout.shadow).merged_with(&rules.shadow);
         let sizing_mode = window.sizing_mode();
         let fullscreen_backdrop_color = options.layout.fullscreen_backdrop_color;
 
@@ -257,7 +258,8 @@ impl<W: LayoutElement> Tile<W> {
         focus_ring_config.width = round_max1(focus_ring_config.width);
         self.focus_ring.update_config(focus_ring_config);
 
-        let shadow_config = self.options.layout.shadow.merged_with(&rules.shadow);
+        let shadow_config =
+            crate::pixel_shadow::over(self.options.layout.shadow).merged_with(&rules.shadow);
         self.shadow.update_config(shadow_config);
 
         self.window.update_config(self.options.blur);
@@ -407,7 +409,8 @@ impl<W: LayoutElement> Tile<W> {
         focus_ring_config.width = round_max1(focus_ring_config.width);
         self.focus_ring.update_config(focus_ring_config);
 
-        let shadow_config = self.options.layout.shadow.merged_with(&rules.shadow);
+        let shadow_config =
+            crate::pixel_shadow::over(self.options.layout.shadow).merged_with(&rules.shadow);
         self.shadow.update_config(shadow_config);
 
         let window_size = self.window_size();
