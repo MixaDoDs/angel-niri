@@ -213,6 +213,7 @@ impl BorderRenderElement {
                 Uniform::new("geo_size", geo_size.to_array()),
                 Uniform::new("outer_radius", <[f32; 4]>::from(corner_radius)),
                 Uniform::new("border_width", border_width),
+                Uniform::new("niri_pixel", crate::pixel_corners::pixel()),
             ]),
             HashMap::new(),
         );

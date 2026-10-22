@@ -96,6 +96,7 @@ impl<R: NiriRenderer> ClippedSurfaceRenderElement<R> {
             Uniform::new("geo_size", geo_size),
             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
             mat3_uniform("input_to_geo", input_to_geo),
+            Uniform::new("niri_pixel", crate::pixel_corners::pixel()),
         ]
     }
 

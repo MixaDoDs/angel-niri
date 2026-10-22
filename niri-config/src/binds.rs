@@ -156,6 +156,8 @@ pub enum Action {
     SetBackgroundFps(u32, Option<String>),
     #[knuffel(skip)]
     SetWindowBehindScene(u64, bool),
+    #[knuffel(skip)]
+    SetPixelCorners(f64, u32),
     MinimizeWindow,
     #[knuffel(skip)]
     MinimizeWindowById(u64),
@@ -450,6 +452,9 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::CloseWindow { id: Some(id) } => Self::CloseWindowById(id),
             niri_ipc::Action::SetBackgroundFps { fps, output } => {
                 Self::SetBackgroundFps(fps, output)
+            }
+            niri_ipc::Action::SetPixelCorners { pixel, steps } => {
+                Self::SetPixelCorners(pixel, steps)
             }
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)

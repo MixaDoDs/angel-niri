@@ -319,6 +319,20 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Give windows pixel staircase corners (angel-niri).
+    ///
+    /// A window without a corner radius of its own gets `steps` steps of `pixel` logical pixels;
+    /// corners are drawn with hard edges, the border too. 0 turns it off.
+    #[cfg_attr(feature = "clap", clap(about = "Set pixel staircase window corners"))]
+    SetPixelCorners {
+        /// The staircase's pixel in logical pixels; 0 to turn it off.
+        #[cfg_attr(feature = "clap", arg())]
+        pixel: f64,
+        /// Steps per corner.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 2))]
+        #[serde(default = "default_pixel_steps")]
+        steps: u32,
+    },
     /// Draw a floating window behind a layered wallpaper's nearer things (angel-niri).
     ///
     /// The window goes under the bottom layer-shell layer, where a shell draws the scene's
@@ -2208,6 +2222,10 @@ impl OutputAction {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_pixel_steps() -> u32 {
+    2
 }
 
 fn default_position_change() -> PositionChange {

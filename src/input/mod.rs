@@ -911,6 +911,14 @@ impl State {
                     mapped.toplevel().send_close();
                 }
             }
+            Action::SetPixelCorners(pixel, steps) => {
+                crate::pixel_corners::set(pixel as f32, steps);
+                self.niri
+                    .layout
+                    .with_windows_mut(|mapped, _| mapped.recompute_rules_later());
+                self.niri.refresh_window_rules();
+                self.niri.queue_redraw_all();
+            }
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }

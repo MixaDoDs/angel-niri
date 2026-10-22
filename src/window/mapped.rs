@@ -408,6 +408,11 @@ impl Mapped {
         self.need_to_recompute_rules = true;
     }
 
+    /// angel-niri (pixel_corners.rs): the default radius changed.
+    pub fn recompute_rules_later(&mut self) {
+        self.need_to_recompute_rules = true;
+    }
+
     pub fn set_is_window_cast_target(&mut self, value: bool) {
         if self.is_window_cast_target == value {
             return;
