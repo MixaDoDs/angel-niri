@@ -355,7 +355,7 @@ pub enum Action {
     },
     /// Draw the overview in pixels (angel-niri).
     ///
-    /// Sharp (nearest-filtered) thumbnails, zooming in `steps` steps, and a frame of 2 × `pixel`
+    /// Sharp (nearest-filtered) thumbnails and a frame of 2 × `pixel`
     /// logical pixels with notched corners around every workspace, its name over it in `font`.
     /// 0 turns it off.
     #[cfg_attr(feature = "clap", clap(about = "Set the pixel overview"))]
@@ -363,10 +363,6 @@ pub enum Action {
         /// The art pixel in logical pixels; 0 to turn it off.
         #[cfg_attr(feature = "clap", arg())]
         pixel: f64,
-        /// Steps of the zoom animation.
-        #[cfg_attr(feature = "clap", arg(long, default_value_t = 6))]
-        #[serde(default = "default_overview_steps")]
-        steps: u32,
         /// The workspace names' font, "Family SIZE" (size in logical pixels).
         #[cfg_attr(feature = "clap", arg(long, default_value = ""))]
         #[serde(default)]
@@ -2344,10 +2340,6 @@ fn default_pixel_steps() -> u32 {
 
 fn default_dim_alpha() -> f64 {
     0.5
-}
-
-fn default_overview_steps() -> u32 {
-    6
 }
 
 fn default_privacy_cell() -> f64 {

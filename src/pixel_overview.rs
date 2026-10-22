@@ -1,7 +1,6 @@
-//! angel-niri: pixel overview. `niri msg action set-pixel-overview PIXEL [--steps N] [--font F]`
+//! angel-niri: pixel overview. `niri msg action set-pixel-overview PIXEL [--font F]`
 //! (0 = off), for a shell with pixel-art decorations; nothing goes to niri's config:
 //! - the thumbnails are scaled down with nearest filtering: sharp pixels, no blur;
-//! - zooming in and out goes in `steps` steps instead of smoothly, and so does a workspace switch;
 //! - every workspace gets a frame of 2 × PIXEL logical px with notched corners, the active one in
 //!   the focus ring's active colour, and its name (or number) left of it in the font `F` ("Family
 //!   SIZE", size in logical px; a pixel font is drawn without antialiasing).
@@ -30,7 +29,6 @@ use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::utils::to_physical_precise_round;
 
 static PIXEL: AtomicU32 = AtomicU32::new(0);
-static STEPS: AtomicU32 = AtomicU32::new(6);
 static FONT: Mutex<String> = Mutex::new(String::new());
 
 /// The art pixel, logical px; 0 when off.
@@ -38,28 +36,10 @@ pub fn pixel() -> f32 {
     f32::from_bits(PIXEL.load(Ordering::Relaxed))
 }
 
-pub fn set(pixel: f32, steps: u32, font: String) {
+pub fn set(pixel: f32, font: String) {
     PIXEL.store(pixel.max(0.).to_bits(), Ordering::Relaxed);
-    STEPS.store(steps.max(1), Ordering::Relaxed);
     *FONT.lock().unwrap() = font;
     CACHE.with_borrow_mut(|cache| cache.labels.clear());
-}
-
-/// The overview's zoom progress, in steps while pixel overview is on.
-pub fn step(progress: f64) -> f64 {
-    if pixel() <= 0. {
-        return progress;
-    }
-    let steps = f64::from(STEPS.load(Ordering::Relaxed));
-    (progress * steps).round() / steps
-}
-
-/// A value animated from `from` to `to`, in steps while pixel overview is on (a workspace switch).
-pub fn step_between(from: f64, to: f64, value: f64) -> f64 {
-    if (to - from).abs() < f64::EPSILON {
-        return value;
-    }
-    from + step((value - from) / (to - from)) * (to - from)
 }
 
 /// Nearest filtering for the thumbnails while `output`'s overview shows; linear otherwise.

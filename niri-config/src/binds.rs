@@ -163,7 +163,7 @@ pub enum Action {
     #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
-    SetPixelOverview(f64, u32, String),
+    SetPixelOverview(f64, String),
     #[knuffel(skip)]
     SetInactiveDim(f64, f64),
     #[knuffel(skip)]
@@ -487,8 +487,8 @@ impl From<niri_ipc::Action> for Action {
             }
             niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
             niri_ipc::Action::SetInactiveDim { pixel, alpha } => Self::SetInactiveDim(pixel, alpha),
-            niri_ipc::Action::SetPixelOverview { pixel, steps, font } => {
-                Self::SetPixelOverview(pixel, steps, font)
+            niri_ipc::Action::SetPixelOverview { pixel, font } => {
+                Self::SetPixelOverview(pixel, font)
             }
             niri_ipc::Action::SetCastOnlyLayer { namespace, on } => {
                 Self::SetCastOnlyLayer(namespace, on)

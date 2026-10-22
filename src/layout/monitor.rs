@@ -200,10 +200,7 @@ pub type MonitorRenderElement<R> =
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
         match self {
-            // angel-niri (pixel_overview.rs): in steps while it is on
-            WorkspaceSwitch::Animation(anim) => {
-                crate::pixel_overview::step_between(anim.from(), anim.to(), anim.value())
-            }
+            WorkspaceSwitch::Animation(anim) => anim.value(),
             WorkspaceSwitch::Gesture(gesture) => {
                 gesture.current_idx + gesture.animation.as_ref().map_or(0., |anim| anim.value())
             }
@@ -269,8 +266,7 @@ impl InsertWorkspace {
 impl OverviewProgress {
     pub fn value(&self) -> f64 {
         match self {
-            // angel-niri (pixel_overview.rs): in steps while it is on
-            OverviewProgress::Animation(anim) => crate::pixel_overview::step(anim.value()),
+            OverviewProgress::Animation(anim) => anim.value(),
             OverviewProgress::Value(v) => *v,
         }
     }
