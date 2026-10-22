@@ -951,6 +951,10 @@ impl State {
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }
+            Action::SetTearing(on, output) => {
+                self.niri.set_tearing(on, output);
+                self.niri.queue_redraw_all();
+            }
             Action::SetBackgroundFps(fps, output) => {
                 self.niri.set_background_fps(fps, output);
                 self.niri.queue_redraw_all();
