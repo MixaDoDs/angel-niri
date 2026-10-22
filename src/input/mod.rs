@@ -973,6 +973,9 @@ impl State {
             Action::SetRememberWindows(on) => {
                 self.niri.set_remember_windows(on);
             }
+            Action::SetClipboardKeep(on) => {
+                crate::clipboard_keep::set(on);
+            }
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }

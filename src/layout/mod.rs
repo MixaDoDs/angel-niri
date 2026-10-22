@@ -4402,8 +4402,7 @@ impl<W: LayoutElement> Layout<W> {
                                 if let Some(offset) = offset {
                                     // angel-niri (window_throw.rs): it lands where the pointer
                                     // holds it; the sway goes on from where it's drawn.
-                                    let land = tile_render_loc
-                                        - tile.wobble_offset().upscale(zoom);
+                                    let land = tile_render_loc - tile.wobble_offset().upscale(zoom);
                                     let pos = (land - offset).downscale(zoom);
                                     let pos =
                                         mon.workspaces[ws_idx].floating_logical_to_size_frac(pos);

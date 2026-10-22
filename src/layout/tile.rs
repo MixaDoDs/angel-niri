@@ -544,7 +544,8 @@ impl<W: LayoutElement> Tile<W> {
 
     /// angel-niri (window_throw.rs): how far the tile lags behind the pointer dragging it.
     pub fn wobble_offset(&self) -> Point<f64, Logical> {
-        self.wobble.map_or_else(Point::default, |wobble| wobble.offset)
+        self.wobble
+            .map_or_else(Point::default, |wobble| wobble.offset)
     }
 
     /// angel-niri (window_throw.rs): the squash or stretch to draw the tile with: the (x, y)

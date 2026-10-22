@@ -163,6 +163,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetMinimizeFade(bool),
     #[knuffel(skip)]
+    SetClipboardKeep(bool),
+    #[knuffel(skip)]
     SetCastPause(bool, Option<String>, Option<String>),
     #[knuffel(skip)]
     SetWindowBehindScene(u64, bool),
@@ -485,6 +487,7 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetPointerLock { on, output } => Self::SetPointerLock(on, output),
             niri_ipc::Action::SetRememberWindows { on } => Self::SetRememberWindows(on),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
+            niri_ipc::Action::SetClipboardKeep { on } => Self::SetClipboardKeep(on),
             niri_ipc::Action::SetCastPause {
                 on,
                 image,

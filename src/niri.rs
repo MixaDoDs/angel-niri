@@ -271,6 +271,8 @@ pub struct Niri {
     pub pointer_lock_output: Option<String>,
     /// angel-niri: where programs' windows were (remember.rs).
     pub remember: crate::remember::Remember,
+    /// angel-niri: the clipboard of programs that closed (clipboard_keep.rs).
+    pub clipboard_keep: crate::clipboard_keep::ClipboardKeep,
 
     /// Layer surfaces which don't have a buffer attached yet.
     pub unmapped_layer_surfaces: HashSet<WlSurface>,
@@ -891,6 +893,7 @@ impl State {
         self.niri.refresh_idle_inhibit();
         self.refresh_pointer_contents();
         self.niri.refresh_behind_scene();
+        self.clipboard_keep_refresh();
         foreign_toplevel::refresh(self);
         ext_workspace::refresh(self);
         self.refresh_image_copy_capture();
@@ -2812,6 +2815,7 @@ impl Niri {
             tearing_output: None,
             pointer_lock_output: None,
             remember: crate::remember::Remember::load(),
+            clipboard_keep: Default::default(),
             unmapped_layer_surfaces: HashSet::new(),
             mapped_layer_surfaces: HashMap::new(),
             root_surface: HashMap::new(),

@@ -8,6 +8,7 @@ pub mod backend;
 pub mod cast_only;
 pub mod cast_pause;
 pub mod cli;
+pub mod clipboard_keep;
 pub mod cursor;
 #[cfg(feature = "dbus")]
 pub mod dbus;

@@ -58,7 +58,7 @@ use smithay::wayland::selection::primary_selection::{
 use smithay::wayland::selection::wlr_data_control::{
     DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
 };
-use smithay::wayland::selection::{SelectionHandler, SelectionTarget};
+use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 use smithay::wayland::session_lock::{
     LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
 };
@@ -287,17 +287,31 @@ impl KeyboardShortcutsInhibitHandler for State {
 impl SelectionHandler for State {
     type SelectionUserData = Arc<[u8]>;
 
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<SelectionSource>,
+        _seat: Seat<Self>,
+    ) {
+        if ty == SelectionTarget::Clipboard {
+            self.clipboard_keep_new(source);
+        }
+    }
+
     fn send_selection(
         &mut self,
         _ty: SelectionTarget,
-        _mime_type: String,
+        mime_type: String,
         fd: OwnedFd,
         _seat: Seat<Self>,
         user_data: &Self::SelectionUserData,
     ) {
         let _span = tracy_client::span!("send_selection");
 
-        let buf = user_data.clone();
+        // angel-niri: a closed program's copy (clipboard_keep.rs).
+        let buf = (self.niri.clipboard_keep)
+            .data_for(&mime_type, user_data)
+            .unwrap_or_else(|| user_data.clone());
         thread::spawn(move || {
             // Clear O_NONBLOCK, otherwise File::write_all() will stop halfway.
             if let Err(err) = fcntl_setfl(&fd, OFlags::empty()) {

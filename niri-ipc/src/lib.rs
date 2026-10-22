@@ -406,6 +406,20 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Keep the clipboard after the program it was copied from closes (angel-niri).
+    ///
+    /// Its text, links, files and one image are read into memory when copied and served once the
+    /// program is gone. Password managers' copies are never kept.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Keep the clipboard after its program closes")
+    )]
+    SetClipboardKeep {
+        /// Keep it (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Throw floating windows (angel-niri).
     ///
     /// A floating window let go of mid-drag keeps flying with the pointer's speed × `strength`
