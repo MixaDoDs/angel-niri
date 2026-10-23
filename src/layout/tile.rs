@@ -915,7 +915,7 @@ impl<W: LayoutElement> Tile<W> {
             && self.window.has_ssd()
     }
 
-    fn title_height(&self) -> f64 {
+    pub fn title_height(&self) -> f64 {
         if self.is_titled() {
             TITLE_HEIGHT
         } else {

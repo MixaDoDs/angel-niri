@@ -3991,9 +3991,11 @@ impl<W: LayoutElement> Layout<W> {
         let pointer_offset_within_window =
             start_pos_within_output - tile_pos - window_offset.upscale(zoom);
         let window_size = tile.window_size().upscale(zoom);
+        // angel-niri (stacking): a title bar grabbed above the window stays under the pointer.
+        let above = tile.title_height() * zoom / window_size.h;
         let pointer_ratio_within_window = (
             f64::clamp(pointer_offset_within_window.x / window_size.w, 0., 1.),
-            f64::clamp(pointer_offset_within_window.y / window_size.h, 0., 1.),
+            f64::clamp(pointer_offset_within_window.y / window_size.h, -above, 1.),
         );
 
         self.interactive_move = Some(InteractiveMoveState::Starting {
