@@ -486,6 +486,10 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 0.5))]
         #[serde(default = "default_dim_alpha")]
         alpha: f64,
+        /// Only on these outputs (repeat it for more); none: on every output.
+        #[cfg_attr(feature = "clap", arg(long = "output"))]
+        #[serde(default)]
+        outputs: Vec<String>,
     },
     /// Draw the overview in pixels (angel-niri).
     ///

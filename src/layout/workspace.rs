@@ -379,6 +379,8 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn update_render_elements(&mut self, is_active: bool, layer: RenderLayer) {
+        // angel-niri (inactive_dim.rs): the dots only on some outputs
+        crate::inactive_dim::enter(self.output.as_ref());
         self.scrolling
             .update_render_elements(is_active && !self.floating_is_active.get(), layer);
 
@@ -1736,6 +1738,7 @@ impl<W: LayoutElement> Workspace<W> {
         window: &W::Id,
     ) {
         let view_size = self.view_size();
+        crate::inactive_dim::enter(self.output.as_ref());
         for (tile, tile_pos) in self.tiles_with_render_positions_mut(false) {
             if tile.window().id() == window {
                 let view_pos = Point::from((-tile_pos.x, -tile_pos.y));

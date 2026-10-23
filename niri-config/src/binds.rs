@@ -177,7 +177,7 @@ pub enum Action {
     #[knuffel(skip)]
     SetPixelOverview(f64, String),
     #[knuffel(skip)]
-    SetInactiveDim(f64, f64),
+    SetInactiveDim(f64, f64, Vec<String>),
     #[knuffel(skip)]
     SetPixelShadow(f64),
     #[knuffel(skip)]
@@ -526,7 +526,11 @@ impl From<niri_ipc::Action> for Action {
                 squash,
                 wobble,
             } => Self::SetWindowThrow(strength, bounce, squash, wobble),
-            niri_ipc::Action::SetInactiveDim { pixel, alpha } => Self::SetInactiveDim(pixel, alpha),
+            niri_ipc::Action::SetInactiveDim {
+                pixel,
+                alpha,
+                outputs,
+            } => Self::SetInactiveDim(pixel, alpha, outputs),
             niri_ipc::Action::SetPixelOverview { pixel, font } => {
                 Self::SetPixelOverview(pixel, font)
             }

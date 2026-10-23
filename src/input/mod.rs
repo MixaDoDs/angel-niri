@@ -923,8 +923,8 @@ impl State {
                 crate::pixel_overview::set(pixel as f32, font);
                 self.niri.queue_redraw_all();
             }
-            Action::SetInactiveDim(pixel, alpha) => {
-                crate::inactive_dim::set(pixel as f32, alpha as f32);
+            Action::SetInactiveDim(pixel, alpha, outputs) => {
+                crate::inactive_dim::set(pixel as f32, alpha as f32, outputs);
                 self.niri.queue_redraw_all();
             }
             Action::SetWindowThrow(strength, bounce, squash, wobble) => {
