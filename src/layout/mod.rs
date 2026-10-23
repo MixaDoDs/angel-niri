@@ -470,6 +470,8 @@ struct InteractiveMoveData<W: LayoutElement> {
     pub(self) workspace_config: Option<(WorkspaceId, niri_config::LayoutPart)>,
     /// angel-niri (window_throw.rs): the pointer's speed, for a throw on release.
     pub(self) velocity: crate::window_throw::Velocity,
+    /// angel-niri (stacking.rs): where the window snaps when let go.
+    pub(self) snap: Option<crate::stacking::Snap>,
 }
 
 #[derive(Debug)]
@@ -3009,6 +3011,7 @@ impl<W: LayoutElement> Layout<W> {
                         workspace: insert_ws,
                         position,
                         corner_radius,
+                        snap: move_.snap,
                     });
                 }
                 InsertWorkspace::NewAt(_) => {
@@ -3021,6 +3024,7 @@ impl<W: LayoutElement> Layout<W> {
                         workspace: insert_ws,
                         position,
                         corner_radius: CornerRadius::default(),
+                        snap: None,
                     });
                 }
             }
@@ -4139,6 +4143,7 @@ impl<W: LayoutElement> Layout<W> {
                     output_config,
                     workspace_config,
                     velocity: Default::default(),
+                    snap: None,
                 };
                 data.velocity
                     .add(self.clock.now(), data.pointer_pos_within_output);
@@ -4215,6 +4220,16 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 move_.pointer_pos_within_output = pointer_pos_within_output;
+
+                // angel-niri (stacking.rs): a floating window dragged to an edge snaps there.
+                move_.snap = (crate::stacking::on() && move_.is_floating && !self.overview_open)
+                    .then(|| {
+                        crate::stacking::snap_at(
+                            pointer_pos_within_output,
+                            output_size(&move_.output),
+                        )
+                    })
+                    .flatten();
 
                 self.interactive_move = Some(InteractiveMoveState::Moving(move_));
             }
@@ -4453,6 +4468,14 @@ impl<W: LayoutElement> Layout<W> {
                             true,
                             None,
                         );
+
+                        // angel-niri (stacking.rs): let go at an edge, it snaps there.
+                        if let Some(snap) = move_.snap {
+                            if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.id() == ws_id)
+                            {
+                                ws.set_floating_snap(&win_id, Some(snap));
+                            }
+                        }
                     }
                 }
 

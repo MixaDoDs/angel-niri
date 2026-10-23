@@ -21,6 +21,7 @@ use crate::niri_render_elements;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::RenderCtx;
+use crate::stacking::Snap;
 use crate::utils::transaction::TransactionBlocker;
 use crate::utils::{
     center_preferring_top_left_in_area, clamp_preferring_top_left_in_area, ensure_min_max_size,
@@ -97,6 +98,12 @@ struct Data {
 
     /// angel-niri (window_throw.rs): the window flying after a throw.
     throw: Option<Throw>,
+
+    /// angel-niri (stacking.rs): where the window sits snapped (maximized, a half, a quarter).
+    snap: Option<Snap>,
+
+    /// angel-niri (stacking.rs): its place and size before it snapped, to go back to.
+    unsnapped: Option<Rectangle<f64, Logical>>,
 }
 
 impl Data {
@@ -111,6 +118,8 @@ impl Data {
             size: Size::default(),
             working_area,
             throw: None,
+            snap: None,
+            unsnapped: None,
         };
         rv.update(tile);
         rv.set_logical_pos(logical_pos);
@@ -237,7 +246,15 @@ impl<W: LayoutElement> FloatingSpace<W> {
         for (tile, data) in zip(&mut self.tiles, &mut self.data) {
             tile.update_config(view_size, scale, options.clone());
             data.update(tile);
-            data.update_config(working_area);
+            // angel-niri (stacking.rs): a snapped window keeps filling its part.
+            if let Some(snap) = data.snap.filter(|_| data.working_area != working_area) {
+                let rect = snap.rect(working_area);
+                request_tile_size(tile, rect.size, false);
+                data.update_config(working_area);
+                data.set_logical_pos(rect.loc);
+            } else {
+                data.update_config(working_area);
+            }
         }
 
         self.view_size = view_size;
@@ -504,6 +521,52 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.insert(idx, tile);
 
         self.bring_up_descendants_of(idx);
+    }
+
+    /// angel-niri (stacking.rs): where the window sits snapped, if it does.
+    pub fn snap(&self, id: &W::Id) -> Option<Snap> {
+        self.idx_of(id).and_then(|idx| self.data[idx].snap)
+    }
+
+    /// angel-niri (stacking.rs): snaps the window to a part of the working area (it fills it),
+    /// or, with `None`, gives it back the place and size it had before it snapped.
+    pub fn set_snap(&mut self, id: &W::Id, snap: Option<Snap>, animate: bool) {
+        let Some(idx) = self.idx_of(id) else {
+            return;
+        };
+        let data = self.data[idx];
+        let rect = match snap {
+            Some(snap) => {
+                if data.snap.is_none() {
+                    self.data[idx].unsnapped = Some(Rectangle::new(data.logical_pos, data.size));
+                }
+                snap.rect(self.working_area)
+            }
+            None => {
+                let Some(mut rect) = data.unsnapped else {
+                    return;
+                };
+                self.data[idx].unsnapped = None;
+                // It opened maximized, never having a size of its own: two thirds, centred.
+                if rect.size.w < 2. || rect.size.h < 2. {
+                    rect.size = self.working_area.size.downscale(1.5);
+                    rect.loc = center_preferring_top_left_in_area(self.working_area, rect.size);
+                }
+                rect
+            }
+        };
+        request_tile_size(&mut self.tiles[idx], rect.size, animate);
+        self.move_to(idx, rect.loc, animate);
+        self.data[idx].snap = snap;
+    }
+
+    /// angel-niri (stacking.rs): the window leaves its snapped part without going back to its
+    /// old size (it is being resized by hand); returns the size it had before it snapped.
+    pub fn forget_snap(&mut self, id: &W::Id) -> Option<Size<f64, Logical>> {
+        let idx = self.idx_of(id)?;
+        let data = &mut self.data[idx];
+        data.snap = None;
+        data.unsnapped.take().map(|rect| rect.size)
     }
 
     /// angel-niri (stacking.rs): `pos`, or a step down and right while a window already sits
@@ -1172,6 +1235,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
             return false;
         }
 
+        // angel-niri (stacking.rs): resized by hand, a snapped window keeps its new size.
+        self.forget_snap(&window);
+
         let tile = self
             .tiles
             .iter_mut()
@@ -1491,4 +1557,21 @@ fn resolve_preset_size(preset: PresetSize, view_size: f64) -> ResolvedSize {
         PresetSize::Proportion(proportion) => ResolvedSize::Tile(view_size * proportion),
         PresetSize::Fixed(width) => ResolvedSize::Window(f64::from(width)),
     }
+}
+
+/// angel-niri (stacking.rs): asks the tile's window for the size that makes the tile `size`.
+fn request_tile_size<W: LayoutElement>(
+    tile: &mut Tile<W>,
+    size: Size<f64, Logical>,
+    animate: bool,
+) {
+    let w = tile.window_width_for_tile_width(size.w).round().max(1.) as i32;
+    let h = tile.window_height_for_tile_height(size.h).round().max(1.) as i32;
+    let win = tile.window_mut();
+    let (min_size, max_size) = (win.min_size(), win.max_size());
+    let size = Size::from((
+        ensure_min_max_size(w, min_size.w, max_size.w),
+        ensure_min_max_size(h, min_size.h, max_size.h),
+    ));
+    win.request_size_once(size, animate);
 }

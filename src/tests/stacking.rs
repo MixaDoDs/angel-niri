@@ -1,8 +1,16 @@
-use super::*;
-use crate::tests::client::ClientId;
 use smithay::desktop::Window;
+use smithay::utils::Point;
+use wayland_client::protocol::wl_surface::WlSurface;
+
+use super::*;
+use crate::layout::LayoutElement as _;
+use crate::tests::client::ClientId;
 
 fn open(f: &mut Fixture, id: ClientId, w: u16, h: u16) -> Window {
+    open_surface(f, id, w, h).0
+}
+
+fn open_surface(f: &mut Fixture, id: ClientId, w: u16, h: u16) -> (Window, WlSurface) {
     let before: Vec<_> = f
         .niri()
         .layout
@@ -19,7 +27,7 @@ fn open(f: &mut Fixture, id: ClientId, w: u16, h: u16) -> Window {
     window.ack_last_and_commit();
     f.double_roundtrip(id);
     let mut windows = f.niri().layout.windows().map(|(_, m)| m.window.clone());
-    windows.find(|win| !before.contains(win)).unwrap()
+    (windows.find(|win| !before.contains(win)).unwrap(), surface)
 }
 
 // the windows of the active workspace's columns, left to right
@@ -113,4 +121,112 @@ fn stacking_new_windows_join_at_the_end() {
     set_stacking(&mut f, id, false);
     assert_eq!(columns(&mut f), [vec![a], vec![c], vec![d]]);
     assert_eq!(floating(&mut f), [b]);
+}
+
+// maximized while stacking (the client asks), a window fills the working area above the others
+// and stays floating; asked again (its client never hears it is maximized), it gets its place
+// back
+#[test]
+fn stacking_maximize_stays_floating() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    set_stacking(&mut f, id, true);
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.commit();
+    f.roundtrip(id);
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    let pos = |f: &mut Fixture| {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        let (tile, pos) = ws.floating().tiles_with_offsets().next().unwrap();
+        (pos, ws.floating().snap(&tile.window().window))
+    };
+    let before = pos(&mut f);
+    let _ = f.client(id).window(&surface).format_recent_configures();
+
+    f.client(id).window(&surface).set_maximized();
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&surface);
+    let configures = window.format_recent_configures();
+    assert!(configures.contains("size: 1920 × 1080"), "{configures}");
+    window.set_size(1920, 1080);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    let (at, snap) = pos(&mut f);
+    assert_eq!((at.x, at.y), (0., 0.));
+    assert_eq!(snap, Some(crate::stacking::Snap::Maximized));
+    assert!(columns(&mut f).is_empty(), "maximized into the columns");
+
+    f.client(id).window(&surface).set_maximized();
+    f.double_roundtrip(id);
+    let configures = f.client(id).window(&surface).format_recent_configures();
+    assert!(configures.contains("size: 300 × 200"), "{configures}");
+    assert_eq!(pos(&mut f), before);
+}
+
+// dragged to the left edge, a window snaps to the left half; dragged off it, it gets its size
+// back
+#[test]
+fn stacking_drag_to_edge_snaps() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    set_stacking(&mut f, id, true);
+    let (a, surface) = open_surface(&mut f, id, 300, 200);
+    let output = f.niri_output(1);
+    let snap = |f: &mut Fixture| {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        let (tile, pos) = ws.floating().tiles_with_offsets().next().unwrap();
+        (
+            ws.floating().snap(&tile.window().window),
+            pos,
+            tile.window().requested_size(),
+        )
+    };
+
+    let layout = &mut f.niri().layout;
+    layout.interactive_move_begin(a.clone(), &output, Point::from((960., 540.)));
+    // the first motion starts the move, the next ones move it
+    layout.interactive_move_update(
+        &a,
+        Point::from((-950., 0.)),
+        output.clone(),
+        (10., 540.).into(),
+    );
+    layout.interactive_move_update(
+        &a,
+        Point::from((-8., 0.)),
+        output.clone(),
+        (2., 540.).into(),
+    );
+    layout.interactive_move_end(&a);
+    f.double_roundtrip(id);
+    let (at, pos, size) = snap(&mut f);
+    assert_eq!(at, Some(crate::stacking::Snap::Left));
+    assert_eq!((pos.x, pos.y), (0., 0.));
+    assert_eq!(size.map(|s| (s.w, s.h)), Some((960, 1080)));
+    let window = f.client(id).window(&surface);
+    window.set_size(960, 1080);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let layout = &mut f.niri().layout;
+    layout.interactive_move_begin(a.clone(), &output, Point::from((100., 100.)));
+    layout.interactive_move_update(
+        &a,
+        Point::from((600., 300.)),
+        output.clone(),
+        (700., 400.).into(),
+    );
+    layout.interactive_move_update(&a, Point::from((100., 0.)), output, (800., 400.).into());
+    layout.interactive_move_end(&a);
+    f.double_roundtrip(id);
+    let (at, _, size) = snap(&mut f);
+    assert_eq!(at, None);
+    assert_eq!(size.map(|s| (s.w, s.h)), Some((300, 200)));
 }

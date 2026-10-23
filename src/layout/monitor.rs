@@ -28,6 +28,7 @@ use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::RenderCtx;
 use crate::rubber_band::RubberBand;
+use crate::stacking::{Snap, SnapFrame};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     output_size, round_logical_in_physical, round_logical_in_physical_max1, ResizeEdge,
@@ -77,6 +78,9 @@ pub struct Monitor<W: LayoutElement> {
     insert_hint_element: InsertHintElement,
     /// Location to render the insert hint element.
     insert_hint_render_loc: Option<InsertHintRenderLoc>,
+    /// angel-niri (stacking.rs): where a dragged window will snap, and on which workspace.
+    snap_frame: SnapFrame,
+    snap_frame_ws: Option<WorkspaceId>,
     /// Whether the overview is open.
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
@@ -145,6 +149,8 @@ pub(super) struct InsertHint {
     pub workspace: InsertWorkspace,
     pub position: InsertPosition,
     pub corner_radius: CornerRadius,
+    /// angel-niri (stacking.rs): the part a dragged floating window snaps to.
+    pub snap: Option<Snap>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -189,6 +195,7 @@ niri_render_elements! {
         Workspace = CropRenderElement<WorkspaceRenderElement<R>>,
         InsertHint = CropRenderElement<InsertHintRenderElement>,
         UncroppedInsertHint = InsertHintRenderElement,
+        SnapFrame = CropRenderElement<SolidColorRenderElement>,
         Shadow = ShadowRenderElement,
         SolidColor = SolidColorRenderElement,
     }
@@ -340,6 +347,8 @@ impl<W: LayoutElement> Monitor<W> {
             insert_hint: None,
             insert_hint_element: InsertHintElement::new(options.layout.insert_hint),
             insert_hint_render_loc: None,
+            snap_frame: SnapFrame::default(),
+            snap_frame_ws: None,
             overview_open: false,
             overview_progress: None,
             workspace_switch: None,
@@ -1110,7 +1119,20 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         self.insert_hint_render_loc = None;
-        if let Some(hint) = &self.insert_hint {
+
+        // angel-niri (stacking.rs): the pixel frame where a dragged window will snap.
+        let snap = self.insert_hint.as_ref().and_then(|hint| {
+            let ws_id = hint.workspace.existing_id()?;
+            let ws = &self.workspaces[self.idx_of_ws(ws_id)?];
+            Some((ws_id, hint.snap?.rect(ws.working_area())))
+        });
+        self.snap_frame.update(
+            snap.map(|(_, area)| area),
+            self.options.layout.insert_hint.color,
+        );
+        self.snap_frame_ws = snap.map(|(ws_id, _)| ws_id);
+
+        if let Some(hint) = self.insert_hint.as_ref().filter(|_| snap.is_none()) {
             match hint.workspace {
                 InsertWorkspace::Existing(ws_id) => {
                     if let Some(idx) = self.idx_of_ws(ws_id) {
@@ -1803,6 +1825,10 @@ impl<W: LayoutElement> Monitor<W> {
                         );
                     }
                     1 => {
+                        // angel-niri (stacking.rs): over the other windows, under the dragged one.
+                        if self.snap_frame_ws == Some(ws.id()) {
+                            self.snap_frame.render(push!());
+                        }
                         ws.render_floating(
                             ctx.r(),
                             xray_pos,

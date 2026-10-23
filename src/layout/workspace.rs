@@ -35,6 +35,7 @@ use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::RenderCtx;
+use crate::stacking::Snap;
 use crate::utils::id::IdCounter;
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
@@ -661,6 +662,12 @@ impl<W: LayoutElement> Workspace<W> {
         self.enter_output_for_window(tile.window());
         tile.restore_to_floating = is_floating;
 
+        // angel-niri (stacking.rs): a window opening maximized floats maximized.
+        let stack_maximized = crate::stacking::on()
+            && is_floating
+            && tile.window().pending_sizing_mode().is_maximized();
+        let stack_id = tile.window().id().clone();
+
         match target {
             WorkspaceAddWindowTarget::Auto => {
                 // Don't steal focus from an active fullscreen window.
@@ -668,7 +675,9 @@ impl<W: LayoutElement> Workspace<W> {
 
                 // If the tile is pending maximized or fullscreen, open it in the scrolling layout
                 // where it can do that.
-                if is_floating && tile.window().pending_sizing_mode().is_normal() {
+                if is_floating
+                    && (tile.window().pending_sizing_mode().is_normal() || stack_maximized)
+                {
                     self.floating.add_tile(tile, activate);
 
                     if activate || self.scrolling.is_empty() {
@@ -697,7 +706,9 @@ impl<W: LayoutElement> Workspace<W> {
 
                 let floating_has_window = self.floating.has_window(next_to);
 
-                if is_floating && tile.window().pending_sizing_mode().is_normal() {
+                if is_floating
+                    && (tile.window().pending_sizing_mode().is_normal() || stack_maximized)
+                {
                     if floating_has_window {
                         self.floating.add_tile_above(next_to, tile, activate);
                     } else {
@@ -746,6 +757,11 @@ impl<W: LayoutElement> Workspace<W> {
                     }
                 }
             }
+        }
+
+        if stack_maximized {
+            self.floating
+                .set_snap(&stack_id, Some(Snap::Maximized), false);
         }
     }
 
@@ -1366,6 +1382,15 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_maximized(&mut self, window: &W::Id, maximize: bool) {
+        // angel-niri (stacking.rs): a window maximizes where it is, above the others. Its client
+        // never hears it is maximized, so it asks again to go back: that toggles.
+        if crate::stacking::on() && self.floating.has_window(window) {
+            let maximized = self.floating.snap(window) == Some(Snap::Maximized);
+            let snap = (maximize && !maximized).then_some(Snap::Maximized);
+            self.floating.set_snap(window, snap, true);
+            return;
+        }
+
         let mut restore_to_floating = false;
         if self.floating.has_window(window) {
             if maximize {
@@ -1425,6 +1450,10 @@ impl<W: LayoutElement> Workspace<W> {
         // In the floating layout, windows cannot be maximized.
         if let Some(col) = self.scrolling.columns().find(|col| col.contains(window)) {
             current = col.is_pending_maximized();
+        }
+        // angel-niri (stacking.rs): except while stacking.
+        if self.floating.snap(window) == Some(Snap::Maximized) {
+            current = true;
         }
 
         self.set_maximized(window, !current);
@@ -2126,6 +2155,15 @@ impl<W: LayoutElement> Workspace<W> {
     /// floated on their own stay floating.
     pub fn exit_stacking(&mut self, stacked: &[W::Id]) {
         let columns = std::mem::take(&mut self.stacked_columns);
+        let snapped: Vec<_> = self
+            .floating
+            .tiles()
+            .map(|tile| tile.window().id().clone())
+            .filter(|id| self.floating.snap(id).is_some())
+            .collect();
+        for id in &snapped {
+            self.floating.set_snap(id, None, false);
+        }
         let active = if self.floating_is_active.get() {
             self.floating.active_window().map(|win| win.id().clone())
         } else {
@@ -2203,6 +2241,11 @@ impl<W: LayoutElement> Workspace<W> {
                 tile.animate_move_from(*old - pos);
             }
         }
+    }
+
+    /// angel-niri (stacking.rs): snaps a floating window to a part of the working area, or back.
+    pub fn set_floating_snap(&mut self, id: &W::Id, snap: Option<Snap>) {
+        self.floating.set_snap(id, snap, true);
     }
 
     /// angel-niri (window_throw.rs): sends a floating window flying.
