@@ -2127,7 +2127,18 @@ impl<W: LayoutElement> Workspace<W> {
                 } else {
                     0.
                 };
-                let size = removed.tile.tile_size() + Size::from((0., title));
+                let mut size = removed.tile.tile_size() + Size::from((0., title));
+                // A window as tall as the screen gives its title bar room.
+                let area = self.working_area.size;
+                if size.h > area.h || size.w > area.w {
+                    let win = removed.tile.window_size();
+                    let w = win.w - f64::max(size.w - area.w, 0.);
+                    let h = win.h - f64::max(size.h - area.h, 0.);
+                    removed.tile.floating_window_size =
+                        Some(Size::from((w.max(1.), h.max(1.))).to_i32_round());
+                    size.w = size.w.min(area.w);
+                    size.h = size.h.min(area.h);
+                }
                 let pos = if *visible {
                     *render_pos - Point::from((0., title))
                 } else {
