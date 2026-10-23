@@ -5410,16 +5410,8 @@ impl Niri {
         let state = self.output_state.get(output).unwrap();
         let sequence = state.frame_callback_sequence;
 
-        let should_send = |surface: &WlSurface, states: &SurfaceData| {
-            // Do the standard primary scanout output check. For pointer surfaces it deduplicates
-            // the frame callbacks across potentially multiple outputs, and for regular windows and
-            // layer-shell surfaces it avoids sending frame callbacks to invisible surfaces.
-            let current_primary_output = surface_primary_scanout_output(surface, states);
-            if current_primary_output.as_ref() != Some(output) {
-                return None;
-            }
-
-            // Next, check the throttling status.
+        let throttled = |states: &SurfaceData| {
+            // Check the throttling status.
             let frame_throttling_state = states
                 .data_map
                 .get_or_insert(SurfaceFrameThrottlingState::default);
@@ -5443,6 +5435,27 @@ impl Niri {
             }
         };
 
+        let should_send = |surface: &WlSurface, states: &SurfaceData| {
+            // Do the standard primary scanout output check. For pointer surfaces it deduplicates
+            // the frame callbacks across potentially multiple outputs, and for regular windows and
+            // layer-shell surfaces it avoids sending frame callbacks to invisible surfaces.
+            let current_primary_output = surface_primary_scanout_output(surface, states);
+            if current_primary_output.as_ref() != Some(output) {
+                return None;
+            }
+
+            throttled(states)
+        };
+
+        // angel-niri (cast_only.rs): a viewers-only layer is never on the monitor, so it has no
+        // primary scanout output and would get a frame callback only once a second; while the
+        // output is cast, it gets one every refresh like a visible surface.
+        #[cfg(feature = "xdp-gnome-screencast")]
+        let is_cast = self.is_output_cast(output);
+        #[cfg(not(feature = "xdp-gnome-screencast"))]
+        let is_cast = false;
+        let should_send_cast_only = |_: &WlSurface, states: &SurfaceData| throttled(states);
+
         let frame_callback_time = get_monotonic_time();
 
         for mapped in self.layout.windows_for_output_mut(output) {
@@ -5455,6 +5468,16 @@ impl Niri {
         }
 
         for surface in layer_map_for_output(output).layers() {
+            if is_cast && crate::cast_only::is_cast_only(surface.namespace()) {
+                surface.send_frame(
+                    output,
+                    frame_callback_time,
+                    FRAME_CALLBACK_THROTTLE,
+                    should_send_cast_only,
+                );
+                continue;
+            }
+
             surface.send_frame(
                 output,
                 frame_callback_time,

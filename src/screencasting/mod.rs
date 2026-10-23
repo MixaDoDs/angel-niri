@@ -533,6 +533,15 @@ impl Niri {
         }
     }
 
+    /// angel-niri (cast_only.rs): whether an active screencast shows this output.
+    pub fn is_output_cast(&self, output: &Output) -> bool {
+        let weak = output.downgrade();
+        self.casting
+            .casts
+            .iter()
+            .any(|cast| cast.is_active() && cast.target.matches_output(&weak))
+    }
+
     pub fn render_for_screen_cast(
         &mut self,
         renderer: &mut GlesRenderer,

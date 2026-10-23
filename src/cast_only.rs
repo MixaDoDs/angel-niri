@@ -21,8 +21,12 @@ pub fn set(namespace: String, on: bool) {
     }
 }
 
+/// Whether layer surfaces of this namespace are drawn only into screencasts.
+pub fn is_cast_only(namespace: &str) -> bool {
+    NAMESPACES.lock().unwrap().iter().any(|ns| ns == namespace)
+}
+
 /// Whether a layer surface of this namespace stays out of what is rendered for `target`.
 pub fn hides(namespace: &str, target: RenderTarget) -> bool {
-    target != RenderTarget::Screencast
-        && NAMESPACES.lock().unwrap().iter().any(|ns| ns == namespace)
+    target != RenderTarget::Screencast && is_cast_only(namespace)
 }
