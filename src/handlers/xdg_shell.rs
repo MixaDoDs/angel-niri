@@ -1020,6 +1020,18 @@ impl XdgDecorationHandler for State {
         //
         // The bug has been fixed, but there's a ton of apps which will use the buggy version for a
         // long while...
+        //
+        // angel-niri (stacking.rs): while stacking, a mapped window gets server side anyway; the
+        // wish is kept for when stacking ends.
+        crate::stacking::remember_decoration(&toplevel, mode);
+        let surface = toplevel.wl_surface();
+        let mode = if crate::stacking::on()
+            && self.niri.layout.find_window_and_output(surface).is_some()
+        {
+            zxdg_toplevel_decoration_v1::Mode::ServerSide
+        } else {
+            mode
+        };
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(mode);
         });

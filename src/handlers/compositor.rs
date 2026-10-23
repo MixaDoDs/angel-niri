@@ -227,6 +227,12 @@ impl CompositorHandler for State {
                     );
                     let output = output.cloned();
 
+                    // angel-niri (stacking.rs): it gets a title bar even if it asked to go
+                    // without.
+                    if crate::stacking::on() {
+                        self.stacking_decorations();
+                    }
+
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also
                     // maximized from the is_pending_maximized variable. Tell the layout about it

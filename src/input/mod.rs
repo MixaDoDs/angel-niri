@@ -988,11 +988,15 @@ impl State {
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }
-            Action::SetStackingMode(on, title_font) => {
+            Action::SetStackingMode(on, title_font, title_style) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);
                 }
+                if let Some(style) = title_style {
+                    crate::stacking_title::set_mac(style == "mac");
+                }
                 self.niri.layout.set_stacking(on);
+                self.stacking_decorations();
                 self.niri.queue_redraw_all();
             }
             Action::SetPointerLock(on, output) => {
@@ -2368,6 +2372,9 @@ impl State {
                     }
                 }
             }
+            // angel-niri (stacking.rs): while stacking every window floats; nothing to toggle.
+            Action::ToggleWindowFloating | Action::ToggleWindowFloatingById(_)
+                if crate::stacking::on() => {}
             Action::ToggleWindowFloating => {
                 self.niri.layout.toggle_window_floating(None);
                 // FIXME: granular

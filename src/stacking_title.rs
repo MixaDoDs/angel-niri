@@ -11,8 +11,12 @@
 //! art pixels square with nearest filtering; a window without one has its title start at the left.
 //!
 //! Around such a window the pointer also grabs its edges to resize it, `GRAB` px outside.
+//!
+//! The Mac look (`--title-style mac`, Golden Gate) has three round pixel buttons on the left —
+//! close, minimize, maximize in red, yellow and green, grey on inactive windows — and the title
+//! in the middle, without an icon, on a light grey bar.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -43,6 +47,16 @@ const ICON_RETRY: Duration = Duration::from_secs(2);
 
 thread_local! {
     static FONT: RefCell<String> = const { RefCell::new(String::new()) };
+    static MAC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the title bars have the Mac look.
+pub fn set_mac(mac: bool) {
+    MAC.with(|cell| cell.set(mac));
+}
+
+fn mac() -> bool {
+    MAC.with(Cell::get)
 }
 
 /// The font of the titles, "Family SIZE" (size in logical px); empty for the default.
@@ -63,6 +77,9 @@ pub enum FramePart {
 /// The buttons of a title bar of `width`, right to left on the art-pixel grid: eight by seven art
 /// pixels each, minimize and maximize side by side, close two art pixels apart.
 fn buttons(width: f64) -> [(FramePart, Rectangle<f64, Logical>); 3] {
+    if mac() {
+        return mac_buttons();
+    }
     let (w, h) = (8. * ART, 7. * ART);
     let y = 2. * ART;
     let right = (width / ART).floor() * ART;
@@ -74,6 +91,21 @@ fn buttons(width: f64) -> [(FramePart, Rectangle<f64, Logical>); 3] {
         (FramePart::Minimize, rect(minimize)),
         (FramePart::Maximize, rect(maximize)),
         (FramePart::Close, rect(close)),
+    ]
+}
+
+/// The Mac look's buttons, left to right: six art pixels round, two apart, four from the left.
+fn mac_buttons() -> [(FramePart, Rectangle<f64, Logical>); 3] {
+    let rect = |i: f64| {
+        Rectangle::new(
+            Point::from(((4. + 8. * i) * ART, 3. * ART)),
+            Size::from((6. * ART, 6. * ART)),
+        )
+    };
+    [
+        (FramePart::Close, rect(0.)),
+        (FramePart::Minimize, rect(1.)),
+        (FramePart::Maximize, rect(2.)),
     ]
 }
 
@@ -125,6 +157,7 @@ struct Look {
     font: String,
     corners: u32,
     icon: bool,
+    mac: bool,
 }
 
 /// One window's title bar, drawn once per look.
@@ -176,6 +209,7 @@ impl TitleBar {
             font: FONT.with(|font| font.borrow().clone()),
             corners: crate::pixel_corners::pixel().to_bits(),
             icon,
+            mac: mac(),
         };
         if self.look.as_ref() != Some(&look) {
             self.buffer = draw(renderer, &look, scale, color, icon_path.filter(|_| icon))
@@ -242,6 +276,10 @@ fn draw(
     let light = mix(face, WHITE, 0.7);
     let shadow = mix(bg, BLACK, 0.55);
     let glyph = mix(bg, BLACK, 0.85);
+
+    if look.mac {
+        return draw_mac(renderer, look, scale);
+    }
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
     let cr = cairo::Context::new(&surface)?;
@@ -346,6 +384,119 @@ fn draw(
     )?)
 }
 
+/// A round button, six by six art pixels.
+const MAC_BUTTON: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
+
+/// The Mac look (see the module docs).
+fn draw_mac(
+    renderer: &mut GlesRenderer,
+    look: &Look,
+    scale: f64,
+) -> anyhow::Result<TextureBuffer<GlesTexture>> {
+    let width = look.width.max(1);
+    let height = ((TITLE_HEIGHT * scale).round() as i32).max(1);
+    let ap = (ART * scale).round().max(1.);
+
+    let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
+    let text = if look.active { [0.15; 3] } else { [0.55; 3] };
+    let lights: [[f64; 3]; 3] = if look.active {
+        [[1., 0.37, 0.34], [1., 0.74, 0.18], [0.16, 0.78, 0.25]]
+    } else {
+        [[0.8; 3]; 3]
+    };
+
+    let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
+    let cr = cairo::Context::new(&surface)?;
+    cr.set_antialias(cairo::Antialias::None);
+    let rect = |cr: &cairo::Context, c: [f64; 3], x: f64, y: f64, w: f64, h: f64| {
+        cr.set_source_rgb(c[0], c[1], c[2]);
+        cr.rectangle(x, y, w, h);
+        let _ = cr.fill();
+    };
+    rect(&cr, bg, 0., 0., f64::from(width), f64::from(height));
+    // a one art pixel line under the bar
+    rect(
+        &cr,
+        [0.78; 3],
+        0.,
+        f64::from(height) - ap,
+        f64::from(width),
+        ap,
+    );
+
+    let corner = f64::from(f32::from_bits(look.corners)) * scale;
+    if corner > 0. {
+        let step = corner.round().max(1.);
+        cr.set_operator(cairo::Operator::Clear);
+        for i in 0..2 {
+            let i = f64::from(i);
+            let w = step * (2. - i);
+            cr.rectangle(0., step * i, w, step);
+            cr.rectangle(f64::from(width) - w, step * i, w, step);
+        }
+        let _ = cr.fill();
+        cr.set_operator(cairo::Operator::Over);
+    }
+
+    for (color, (_, button)) in lights.iter().zip(mac_buttons()) {
+        let x = (button.loc.x / ART).round() * ap;
+        let y = (button.loc.y / ART).round() * ap;
+        for (row, line) in MAC_BUTTON.iter().enumerate() {
+            for (col, c) in line.chars().enumerate() {
+                if c == '#' {
+                    rect(
+                        &cr,
+                        *color,
+                        x + col as f64 * ap,
+                        y + row as f64 * ap,
+                        ap,
+                        ap,
+                    );
+                }
+            }
+        }
+    }
+
+    // the title in the middle, clear of the buttons on both sides
+    let font = if look.font.is_empty() {
+        "sans 12"
+    } else {
+        &look.font
+    };
+    let mut font = FontDescription::from_string(font);
+    font.set_absolute_size((font.size() as f64 * scale).round());
+    let mut options = cairo::FontOptions::new()?;
+    options.set_antialias(cairo::Antialias::None);
+    options.set_hint_style(cairo::HintStyle::None);
+    let layout = pangocairo::functions::create_layout(&cr);
+    pangocairo::functions::context_set_font_options(&layout.context(), Some(&options));
+    layout.set_font_description(Some(&font));
+    layout.set_ellipsize(EllipsizeMode::End);
+    layout.set_alignment(pangocairo::pango::Alignment::Center);
+    let margin = (28. * ap).min(f64::from(width) / 2.);
+    let text_width = (f64::from(width) - 2. * margin).max(0.);
+    layout.set_width((text_width * f64::from(pangocairo::pango::SCALE)) as i32);
+    layout.set_text(&look.title);
+    let (_, text_height) = layout.pixel_size();
+    let text_y = ((f64::from(height) - f64::from(text_height)) / 2.).round();
+    cr.set_source_rgb(text[0], text[1], text[2]);
+    cr.move_to(margin, text_y);
+    pangocairo::functions::show_layout(&cr, &layout);
+    drop(cr);
+
+    let data = surface.take_data()?;
+    Ok(TextureBuffer::from_memory(
+        renderer,
+        &data,
+        Fourcc::Argb8888,
+        (width, height),
+        false,
+        scale,
+        Transform::Normal,
+        Vec::new(),
+    )?)
+}
+
 /// A PNG icon as a cairo surface (premultiplied ARGB).
 fn load_icon(path: &PathBuf) -> anyhow::Result<ImageSurface> {
     let file = std::fs::File::open(path)?;
@@ -411,5 +562,18 @@ mod tests {
         assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
         assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
         assert_eq!(at(-10., 150.), None, "beyond the grab");
+    }
+
+    #[test]
+    fn mac_frame_parts() {
+        set_mac(true);
+        let size = Size::from((400., 300.));
+        let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size);
+        // close, minimize, maximize from the left: 4 art px in, 6 wide, 2 apart
+        assert_eq!(at(10., 10.), Some(FramePart::Close));
+        assert_eq!(at(26., 10.), Some(FramePart::Minimize));
+        assert_eq!(at(42., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(390., 10.), Some(FramePart::Title));
+        set_mac(false);
     }
 }

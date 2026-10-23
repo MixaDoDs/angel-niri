@@ -390,6 +390,12 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         title_font: Option<String>,
+        /// Look of the title bars: `win98` (icon and title on the left, buttons on the right) or
+        /// `mac` (three round buttons on the left, title in the middle). Kept as it was if not
+        /// given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        title_style: Option<String>,
     },
     /// Open pinned programs where they are pinned (angel-niri).
     ///

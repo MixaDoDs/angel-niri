@@ -22,7 +22,10 @@ use smithay::desktop::Window;
 use smithay::input::pointer::{
     CursorIcon, CursorImageStatus, Focus, GrabStartData as PointerGrabStartData,
 };
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use smithay::utils::{Logical, Point, Rectangle, Serial, Size};
+use smithay::wayland::compositor::with_states;
+use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use crate::input::move_grab::MoveGrab;
 use crate::input::resize_grab::ResizeGrab;
@@ -263,7 +266,71 @@ pub(crate) fn set_flag(on: bool) {
     ON.with(|cell| cell.set(on));
 }
 
+/// The decoration mode a client asked for, kept while stacking overrides it.
+struct WantedDecoration(Cell<Option<DecorationMode>>);
+
+pub fn remember_decoration(toplevel: &ToplevelSurface, mode: DecorationMode) {
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .insert_if_missing(|| WantedDecoration(Cell::new(None)));
+        states
+            .data_map
+            .get::<WantedDecoration>()
+            .unwrap()
+            .0
+            .set(Some(mode));
+    });
+}
+
+fn wanted_decoration(toplevel: &ToplevelSurface) -> Option<DecorationMode> {
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<WantedDecoration>()
+            .and_then(|wanted| wanted.0.get())
+    })
+}
+
 impl State {
+    /// While stacking, every mapped window speaking xdg-decoration gets server side decorations
+    /// (so a pixel title bar), even one that asked for its own, as kitty with
+    /// `hide_window_decorations` does; out of it, each gets what it asked for back. Only mapped
+    /// windows: forcing a mode on SDL2 while it creates its window leaves the window hidden for
+    /// good (see `request_mode`).
+    pub fn stacking_decorations(&mut self) {
+        let on = on();
+        let mut changed = Vec::new();
+        for (_, mapped) in self.niri.layout.windows() {
+            let toplevel = mapped.toplevel();
+            let want = if on {
+                DecorationMode::ServerSide
+            } else {
+                wanted_decoration(toplevel).unwrap_or(DecorationMode::ServerSide)
+            };
+            let differs = toplevel.with_pending_state(|state| {
+                // None: the client does not speak xdg-decoration (or niri hid it).
+                let differs = state.decoration_mode.is_some_and(|mode| mode != want);
+                if differs {
+                    state.decoration_mode = Some(want);
+                }
+                differs
+            });
+            if differs {
+                changed.push(mapped.window.clone());
+            }
+        }
+        for window in changed {
+            if let Some((mapped, _)) = self
+                .niri
+                .layout
+                .find_window_and_output_mut(window.toplevel().unwrap().wl_surface())
+            {
+                mapped.set_needs_configure();
+            }
+        }
+    }
+
     /// A press on a titled window's frame while stacking: dragging the title bar moves the
     /// window, double-clicking it maximizes, a button is done when let go over it, an edge
     /// resizes; a right click on the title bar asks the shell for the window menu. Returns
@@ -453,6 +520,13 @@ impl State {
         match again {
             Some(minimized) => {
                 for other in &minimized {
+                    // Shaken back before the shell took it: it is not minimized yet, and won't be.
+                    if let Some((_, mapped)) =
+                        self.niri.layout.windows().find(|(_, m)| &m.window == other)
+                    {
+                        let id = mapped.id().get();
+                        self.niri.minimize_pending.remove(&id);
+                    }
                     self.unminimize_window(other, false, None);
                 }
             }
