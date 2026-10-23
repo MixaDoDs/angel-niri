@@ -988,6 +988,10 @@ impl State {
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }
+            Action::SetStackingMode(on) => {
+                self.niri.layout.set_stacking(on);
+                self.niri.queue_redraw_all();
+            }
             Action::SetPointerLock(on, output) => {
                 self.niri.set_pointer_lock(on, output);
             }

@@ -33,6 +33,7 @@ pub mod rubber_band;
 pub mod scene;
 #[cfg(feature = "xdp-gnome-screencast")]
 pub mod screencasting;
+pub mod stacking;
 pub mod ui;
 pub mod utils;
 pub mod window;

@@ -13,6 +13,7 @@ mod game;
 mod layer_shell;
 mod remember;
 mod remove_output;
+mod stacking;
 mod transactions;
 mod virtual_pointer;
 mod window_opening;

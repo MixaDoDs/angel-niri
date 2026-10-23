@@ -371,6 +371,9 @@ pub struct Layout<W: LayoutElement> {
     interactive_move: Option<InteractiveMoveState<W>>,
     /// angel-niri: minimized windows, out of the monitors, oldest first.
     minimized: Vec<MinimizedWindow<W>>,
+    /// angel-niri (stacking.rs): the windows the stacking mode floated, to tile again when it
+    /// ends.
+    stacked: Vec<W::Id>,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -752,6 +755,7 @@ impl<W: LayoutElement> Layout<W> {
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
             minimized: Vec::new(),
+            stacked: Vec::new(),
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -778,6 +782,7 @@ impl<W: LayoutElement> Layout<W> {
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
             minimized: Vec::new(),
+            stacked: Vec::new(),
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -1012,6 +1017,14 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<&Output> {
         let scrolling_height = height.map(SizeChange::from);
         let id = window.id().clone();
+
+        // angel-niri (stacking.rs): new windows float, and tile again when it ends.
+        let is_floating = if crate::stacking::on() && !is_floating {
+            self.stacked.push(id.clone());
+            true
+        } else {
+            is_floating
+        };
 
         match &mut self.monitor_set {
             MonitorSet::Normal {
@@ -4286,7 +4299,7 @@ impl<W: LayoutElement> Layout<W> {
         let allow_to_activate_workspace = !self.overview_open;
 
         // angel-niri (window_throw.rs): a floating window let go mid-drag flies on.
-        let throw = if move_.is_floating && !self.overview_open {
+        let throw = if move_.is_floating && !self.overview_open && !crate::stacking::on() {
             move_.velocity.throw(self.clock.now())
         } else {
             None
@@ -5190,6 +5203,41 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     /// Takes the window out of the layout, remembering its place. Returns whether it did.
+    /// angel-niri (stacking.rs): turns the stacking mode on or off. On, every workspace floats
+    /// its columns and new windows open floating; off, the columns come back as they were and
+    /// the windows floated meanwhile join them. Minimized windows come back the same way.
+    pub fn set_stacking(&mut self, on: bool) {
+        if crate::stacking::on() == on {
+            return;
+        }
+        crate::stacking::set_flag(on);
+
+        if on {
+            let mut stacked = Vec::new();
+            for ws in self.workspaces_mut() {
+                stacked.extend(ws.enter_stacking());
+            }
+            for min in &mut self.minimized {
+                if !min.removed.is_floating {
+                    min.removed.is_floating = true;
+                    min.column_idx = None;
+                    stacked.push(min.removed.tile.window().id().clone());
+                }
+            }
+            self.stacked = stacked;
+        } else {
+            let stacked = std::mem::take(&mut self.stacked);
+            for ws in self.workspaces_mut() {
+                ws.exit_stacking(&stacked);
+            }
+            for min in &mut self.minimized {
+                if stacked.contains(min.removed.tile.window().id()) {
+                    min.removed.is_floating = false;
+                }
+            }
+        }
+    }
+
     pub fn minimize_window(&mut self, window: &W::Id) -> bool {
         let Some((output_name, workspace_id, column_idx)) =
             self.workspaces().find_map(|(mon, _, ws)| {

@@ -491,7 +491,12 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         let pos = self.stored_or_default_tile_pos(&tile).unwrap_or_else(|| {
-            center_preferring_top_left_in_area(self.working_area, tile.tile_size())
+            let pos = center_preferring_top_left_in_area(self.working_area, tile.tile_size());
+            if crate::stacking::on() {
+                self.cascade(pos, tile.tile_size())
+            } else {
+                pos
+            }
         });
 
         let data = Data::new(self.working_area, &tile, pos);
@@ -499,6 +504,27 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.insert(idx, tile);
 
         self.bring_up_descendants_of(idx);
+    }
+
+    /// angel-niri (stacking.rs): `pos`, or a step down and right while a window already sits
+    /// there, as long as it stays within the working area.
+    fn cascade(
+        &self,
+        mut pos: Point<f64, Logical>,
+        size: Size<f64, Logical>,
+    ) -> Point<f64, Logical> {
+        let step = Point::from((crate::stacking::CASCADE, crate::stacking::CASCADE));
+        while self.data.iter().any(|data| {
+            let d = data.logical_pos - pos;
+            d.x.abs() < 1. && d.y.abs() < 1.
+        }) {
+            let next = self.clamp_within_working_area(pos + step, size);
+            if next == pos {
+                break;
+            }
+            pos = next;
+        }
+        pos
     }
 
     pub fn add_tile_above(&mut self, above: &W::Id, mut tile: Tile<W>, activate: bool) {

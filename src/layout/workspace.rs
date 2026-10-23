@@ -38,8 +38,8 @@ use crate::render_helpers::RenderCtx;
 use crate::utils::id::IdCounter;
 use crate::utils::transaction::{Transaction, TransactionBlocker};
 use crate::utils::{
-    ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size, send_scale_transform,
-    ResizeEdge,
+    center_preferring_top_left_in_area, ensure_min_max_size, ensure_min_max_size_maybe_zero,
+    output_size, send_scale_transform, ResizeEdge,
 };
 use crate::window::ResolvedWindowRules;
 
@@ -112,6 +112,17 @@ pub struct Workspace<W: LayoutElement> {
 
     /// Unique ID of this workspace.
     id: WorkspaceId,
+
+    /// angel-niri (stacking): the columns as they were when the stacking mode floated them.
+    stacked_columns: Vec<StackedColumn<W::Id>>,
+}
+
+/// angel-niri (stacking): a column the stacking mode floated, to put back when it ends.
+#[derive(Debug)]
+struct StackedColumn<Id> {
+    ids: Vec<Id>,
+    width: ColumnWidth,
+    is_full_width: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +273,7 @@ impl<W: LayoutElement> Workspace<W> {
             scrolling,
             floating,
             floating_is_active: FloatingActive::No,
+            stacked_columns: Vec::new(),
             original_outputs,
             scale,
             transform: output.current_transform(),
@@ -324,6 +336,7 @@ impl<W: LayoutElement> Workspace<W> {
             scrolling,
             floating,
             floating_is_active: FloatingActive::No,
+            stacked_columns: Vec::new(),
             output: None,
             scale,
             transform: Transform::Normal,
@@ -2030,6 +2043,166 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn floating(&self) -> &FloatingSpace<W> {
         &self.floating
+    }
+
+    /// angel-niri (stacking.rs): floats every column, each window where it is on screen — one
+    /// out of view goes to the middle, a step down from the one before — or where it was in the
+    /// last stacking; remembers the columns for `exit_stacking`. Returns the windows it floated.
+    pub fn enter_stacking(&mut self) -> Vec<W::Id> {
+        self.stacked_columns = self
+            .scrolling
+            .columns()
+            .map(|col| {
+                let (ids, width, is_full_width) = col.stacking_record();
+                StackedColumn {
+                    ids,
+                    width,
+                    is_full_width,
+                }
+            })
+            .collect();
+
+        let placed: Vec<_> = self
+            .scrolling
+            .tiles_with_render_positions()
+            .map(|(tile, pos, visible)| (tile.window().id().clone(), pos, visible))
+            .collect();
+        if placed.is_empty() {
+            return Vec::new();
+        }
+        let active = if self.floating_is_active.get() {
+            None
+        } else {
+            self.scrolling.active_window().map(|win| win.id().clone())
+        };
+
+        // The active window goes last, onto the top.
+        let (front, mut order): (Vec<_>, Vec<_>) = placed
+            .iter()
+            .partition(|(id, _, _)| Some(id) == active.as_ref());
+        order.extend(front);
+
+        let mut step = 0.;
+        for (id, render_pos, visible) in &order {
+            let mut removed = self.scrolling.remove_tile(id, Transaction::new());
+            removed.tile.stop_move_animations();
+
+            if self
+                .floating
+                .stored_or_default_tile_pos(&removed.tile)
+                .is_none()
+            {
+                let size = removed.tile.tile_size();
+                let pos = if *visible {
+                    *render_pos
+                } else {
+                    let pos = center_preferring_top_left_in_area(self.working_area, size)
+                        + Point::from((step, step));
+                    step += crate::stacking::CASCADE;
+                    pos
+                };
+                let pos = self.floating.clamp_within_working_area(pos, size);
+                removed.tile.floating_pos = Some(self.floating.logical_to_size_frac(pos));
+            }
+
+            let activate = Some(id) == active.as_ref();
+            self.floating.add_tile(removed.tile, activate);
+        }
+        if active.is_some() {
+            self.floating_is_active = FloatingActive::Yes;
+        }
+
+        let from: Vec<_> = order
+            .into_iter()
+            .map(|(id, pos, _)| (id.clone(), *pos))
+            .collect();
+        self.animate_moves_from(&from);
+        from.into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// angel-niri (stacking.rs): puts back the columns `enter_stacking` floated, in their order
+    /// and width, then every other window the stacking mode floated (`stacked`: opened while it
+    /// was on, or brought over from another workspace) as a new column at the end. Windows that
+    /// floated on their own stay floating.
+    pub fn exit_stacking(&mut self, stacked: &[W::Id]) {
+        let columns = std::mem::take(&mut self.stacked_columns);
+        let active = if self.floating_is_active.get() {
+            self.floating.active_window().map(|win| win.id().clone())
+        } else {
+            None
+        };
+        let from: Vec<_> = self
+            .floating
+            .tiles_with_render_positions()
+            .filter(|(tile, _)| stacked.contains(tile.window().id()))
+            .map(|(tile, pos)| (tile.window().id().clone(), pos))
+            .collect();
+        if from.is_empty() {
+            return;
+        }
+
+        for col in &columns {
+            let mut col_idx = None;
+            for id in &col.ids {
+                if !self.floating.has_window(id) || !stacked.contains(id) {
+                    continue;
+                }
+                let removed = self.floating.remove_tile(id);
+                let activate = Some(id) == active.as_ref();
+                match col_idx {
+                    None => {
+                        let idx = self.scrolling.columns().count();
+                        self.scrolling.add_tile(
+                            Some(idx),
+                            removed.tile,
+                            activate,
+                            col.width,
+                            col.is_full_width,
+                            None,
+                        );
+                        col_idx = Some(idx);
+                    }
+                    Some(idx) => {
+                        self.scrolling
+                            .add_tile_to_column(idx, None, removed.tile, activate)
+                    }
+                }
+            }
+        }
+
+        // The rest bottom to top, so the topmost ends up rightmost.
+        let rest: Vec<_> = self
+            .floating
+            .tiles()
+            .map(|tile| tile.window().id().clone())
+            .filter(|id| stacked.contains(id))
+            .collect();
+        for id in rest.iter().rev() {
+            let removed = self.floating.remove_tile(id);
+            let width = self.resolve_scrolling_width(removed.tile.window(), None);
+            let idx = self.scrolling.columns().count();
+            let activate = Some(id) == active.as_ref();
+            self.scrolling
+                .add_tile(Some(idx), removed.tile, activate, width, false, None);
+        }
+
+        if active
+            .as_ref()
+            .is_some_and(|id| !self.floating.has_window(id))
+            || self.floating.is_empty()
+        {
+            self.floating_is_active = FloatingActive::No;
+        }
+        self.animate_moves_from(&from);
+    }
+
+    /// The windows given move from where they were (`(id, render position)`) to where they are.
+    fn animate_moves_from(&mut self, from: &[(W::Id, Point<f64, Logical>)]) {
+        for (tile, pos) in self.tiles_with_render_positions_mut(false) {
+            if let Some((_, old)) = from.iter().find(|(id, _)| id == tile.window().id()) {
+                tile.animate_move_from(*old - pos);
+            }
+        }
     }
 
     /// angel-niri (window_throw.rs): sends a floating window flying.

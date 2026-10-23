@@ -529,7 +529,8 @@ impl<W: LayoutElement> Tile<W> {
     /// angel-niri (window_throw.rs): the pointer dragging the tile moved by `delta`; `grab` is
     /// where it holds the tile (ratio of its size).
     pub fn wobble_pull(&mut self, delta: Point<f64, Logical>, grab: (f64, f64)) {
-        if window_throw::wobble() <= 0. {
+        // The stacking mode drags windows to snap them to the edges: they follow exactly.
+        if window_throw::wobble() <= 0. || crate::stacking::on() {
             self.wobble = None;
             return;
         }

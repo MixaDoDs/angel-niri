@@ -7050,6 +7050,10 @@ impl Niri {
         let Some(ffm) = self.config.borrow().input.focus_follows_mouse else {
             return;
         };
+        // angel-niri: in the stacking mode windows overlap, and focus follows clicks.
+        if crate::stacking::on() {
+            return;
+        }
 
         let pointer = &self.seat.get_pointer().unwrap();
         if pointer.is_grabbed() {

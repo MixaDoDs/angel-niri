@@ -165,6 +165,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetMinimizeFade(bool),
     #[knuffel(skip)]
+    SetStackingMode(bool),
+    #[knuffel(skip)]
     SetClipboardKeep(bool),
     #[knuffel(skip)]
     SetCastPause(bool, Option<String>, Option<String>),
@@ -499,6 +501,7 @@ impl From<niri_ipc::Action> for Action {
                 output.map(|o| (o, workspace, workspace_name, floating)),
             ),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
+            niri_ipc::Action::SetStackingMode { on } => Self::SetStackingMode(on),
             niri_ipc::Action::SetClipboardKeep { on } => Self::SetClipboardKeep(on),
             niri_ipc::Action::SetCastPause {
                 on,

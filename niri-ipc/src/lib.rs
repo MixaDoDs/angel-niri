@@ -372,6 +372,18 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Turn the stacking mode on or off (angel-niri).
+    ///
+    /// On, every column floats where it is on screen and new windows open floating; off, the
+    /// columns come back as they were (order, width, workspace) and the windows opened meanwhile
+    /// join them at the end. Windows that floated before stay floating.
+    #[cfg_attr(feature = "clap", clap(about = "Turn the stacking mode on or off"))]
+    SetStackingMode {
+        /// On (`true`, the default) or off.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Open pinned programs where they are pinned (angel-niri).
     ///
     /// The places are pinned with `set-app-place`; turned off, they are kept but not used.

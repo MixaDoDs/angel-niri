@@ -3985,6 +3985,16 @@ impl WindowHeight {
 }
 
 impl<W: LayoutElement> Column<W> {
+    /// angel-niri (stacking): its windows top to bottom and the width it was given.
+    pub fn stacking_record(&self) -> (Vec<W::Id>, ColumnWidth, bool) {
+        let ids = self
+            .tiles
+            .iter()
+            .map(|tile| tile.window().id().clone())
+            .collect();
+        (ids, self.width, self.is_full_width)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new_with_tile(
         tile: Tile<W>,
