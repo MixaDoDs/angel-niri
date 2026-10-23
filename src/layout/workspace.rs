@@ -2094,7 +2094,12 @@ impl<W: LayoutElement> Workspace<W> {
         let placed: Vec<_> = self
             .scrolling
             .tiles_with_render_positions()
-            .map(|(tile, pos, visible)| (tile.window().id().clone(), pos, visible))
+            .map(|(tile, pos, visible)| {
+                // `visible` only says the tab is shown; a column scrolled away is not on screen.
+                let w = tile.tile_size().w;
+                let on_screen = visible && pos.x < self.view_size.w && pos.x + w > 0.;
+                (tile.window().id().clone(), pos, on_screen)
+            })
             .collect();
         if placed.is_empty() {
             return Vec::new();

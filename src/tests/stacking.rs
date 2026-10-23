@@ -87,6 +87,39 @@ fn stacking_floats_columns_and_puts_them_back() {
     assert!(floating(&mut f).is_empty());
 }
 
+// columns scrolled off screen come in whole, each in its own place, not stuck at the edge
+#[test]
+fn stacking_scrolled_away_columns_cascade() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    for _ in 0..5 {
+        open(&mut f, id, 900, 500);
+    }
+    f.niri_complete_animations();
+    let ws = f.niri().layout.active_workspace().unwrap();
+    let off_screen = ws
+        .scrolling()
+        .tiles_with_render_positions()
+        .filter(|(tile, pos, _)| pos.x + tile.tile_size().w <= 0. || pos.x >= 1920.)
+        .count();
+    assert!(off_screen >= 2, "nothing scrolled away");
+
+    set_stacking(&mut f, id, true);
+    f.niri_complete_animations();
+    let ws = f.niri().layout.active_workspace().unwrap();
+    let mut seen = Vec::new();
+    for (tile, pos) in ws.floating().tiles_with_render_positions() {
+        assert!(!seen.contains(&pos), "two windows at {pos:?}");
+        seen.push(pos);
+        let right = pos.x + tile.tile_size().w;
+        assert!(
+            pos.x >= 0. && right <= 1920.,
+            "a window half off screen at {pos:?}"
+        );
+    }
+}
+
 // a window opened while stacking floats, and joins the columns at the end; one that floated
 // before stays floating
 #[test]
