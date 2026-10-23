@@ -236,6 +236,10 @@ impl MoveGrab {
                     pos_within_output,
                 );
                 if ongoing {
+                    // angel-niri (stacking.rs): shaken, the other windows go (or come back).
+                    if let Some((window, others)) = data.niri.layout.take_stacking_shake() {
+                        data.stacking_shake(&window, others);
+                    }
                     // FIXME: only redraw the previous and the new output.
                     data.niri.queue_redraw_all();
                     return true;

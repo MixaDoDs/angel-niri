@@ -988,7 +988,10 @@ impl State {
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }
-            Action::SetStackingMode(on) => {
+            Action::SetStackingMode(on, title_font) => {
+                if let Some(font) = title_font {
+                    crate::stacking_title::set_font(font);
+                }
                 self.niri.layout.set_stacking(on);
                 self.niri.queue_redraw_all();
             }
@@ -1267,6 +1270,10 @@ impl State {
                 }
             }
             Action::FocusColumnLeft => {
+                // angel-niri (stacking.rs): while stacking, like Windows' Win+arrows.
+                if self.stacking_arrow(crate::stacking::Arrow::Left) {
+                    return;
+                }
                 self.niri.layout.focus_left();
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
@@ -1287,6 +1294,10 @@ impl State {
                 }
             }
             Action::FocusColumnRight => {
+                // angel-niri (stacking.rs): while stacking, like Windows' Win+arrows.
+                if self.stacking_arrow(crate::stacking::Arrow::Right) {
+                    return;
+                }
                 self.niri.layout.focus_right();
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
@@ -1414,6 +1425,10 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::FocusWindowDown => {
+                // angel-niri (stacking.rs): while stacking, like Windows' Win+arrows.
+                if self.stacking_arrow(crate::stacking::Arrow::Down) {
+                    return;
+                }
                 self.niri.layout.focus_down();
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
@@ -1421,6 +1436,10 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::FocusWindowUp => {
+                // angel-niri (stacking.rs): while stacking, like Windows' Win+arrows.
+                if self.stacking_arrow(crate::stacking::Arrow::Up) {
+                    return;
+                }
                 self.niri.layout.focus_up();
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
@@ -2835,6 +2854,7 @@ impl State {
         }
 
         self.niri.handle_focus_follows_mouse(&under);
+        self.stacking_frame_hover();
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -2936,6 +2956,7 @@ impl State {
         let under = self.niri.contents_under(pos);
 
         self.niri.handle_focus_follows_mouse(&under);
+        self.stacking_frame_hover();
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -3138,6 +3159,11 @@ impl State {
                 }
             }
 
+            // angel-niri (stacking.rs): a window's title bar and edges while stacking.
+            if !mod_down {
+                self.stacking_frame_press(button, button_code, serial);
+            }
+
             if let Some(mapped) = self.niri.window_under_cursor() {
                 let window = mapped.window.clone();
 
@@ -3268,6 +3294,10 @@ impl State {
                 self.niri.queue_redraw_all();
             }
         };
+
+        if ButtonState::Released == button_state && button == Some(MouseButton::Left) {
+            self.stacking_frame_release();
+        }
 
         self.update_pointer_contents();
 

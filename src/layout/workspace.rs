@@ -2121,9 +2121,15 @@ impl<W: LayoutElement> Workspace<W> {
                 .stored_or_default_tile_pos(&removed.tile)
                 .is_none()
             {
-                let size = removed.tile.tile_size();
+                // The size with the title bar it will get, which goes above the window.
+                let title = if removed.tile.window().has_ssd() {
+                    crate::stacking_title::TITLE_HEIGHT
+                } else {
+                    0.
+                };
+                let size = removed.tile.tile_size() + Size::from((0., title));
                 let pos = if *visible {
-                    *render_pos
+                    *render_pos - Point::from((0., title))
                 } else {
                     let pos = center_preferring_top_left_in_area(self.working_area, size)
                         + Point::from((step, step));
@@ -2241,6 +2247,33 @@ impl<W: LayoutElement> Workspace<W> {
                 tile.animate_move_from(*old - pos);
             }
         }
+    }
+
+    /// angel-niri (stacking_title.rs): the floating tiles' sizes again, after title bars came or
+    /// went.
+    pub fn refresh_floating_sizes(&mut self) {
+        self.floating.refresh_sizes();
+    }
+
+    /// angel-niri (stacking_title.rs): the part of a titled floating window's frame at `pos`, and
+    /// the window; none where another window covers it.
+    pub fn frame_part_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(W::Id, crate::stacking_title::FramePart)> {
+        if !self.is_floating_visible() {
+            return None;
+        }
+        for (tile, tile_pos) in self.floating.tiles_with_render_positions() {
+            let pos_within_tile = pos - tile_pos;
+            if let Some(part) = tile.frame_part(pos_within_tile) {
+                return Some((tile.window().id().clone(), part));
+            }
+            if tile.hit(pos_within_tile).is_some() {
+                return None;
+            }
+        }
+        None
     }
 
     /// angel-niri (stacking.rs): snaps a floating window to a part of the working area, or back.

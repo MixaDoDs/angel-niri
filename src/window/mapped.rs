@@ -39,6 +39,7 @@ use crate::render_helpers::surface::{
 };
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::{background_effect, BakedBuffer, RenderCtx, RenderTarget};
+use crate::stacking_title::FramePart;
 use crate::utils::id::IdCounter;
 use crate::utils::transaction::Transaction;
 use crate::utils::{
@@ -144,6 +145,11 @@ pub struct Mapped {
     ///
     /// Used for double-resize-click tracking.
     last_interactive_resize_start: Cell<Option<(Duration, ResizeEdge)>>,
+
+    /// angel-niri (stacking_title.rs): when its title bar was last clicked (for a double click),
+    /// and the title bar button held down, done when let go over it.
+    last_title_click: Cell<Option<Duration>>,
+    title_button_down: Cell<Option<FramePart>>,
 
     /// Whether this window is in windowed (fake) fullscreen.
     ///
@@ -315,6 +321,8 @@ impl Mapped {
             pending_transactions: Vec::new(),
             interactive_resize: None,
             last_interactive_resize_start: Cell::new(None),
+            last_title_click: Cell::new(None),
+            title_button_down: Cell::new(None),
             is_windowed_fullscreen: false,
             is_pending_windowed_fullscreen: false,
             uncommitted_windowed_fullscreen: Vec::new(),
@@ -514,6 +522,14 @@ impl Mapped {
         &self.last_interactive_resize_start
     }
 
+    pub fn last_title_click(&self) -> &Cell<Option<Duration>> {
+        &self.last_title_click
+    }
+
+    pub fn title_button_down(&self) -> &Cell<Option<FramePart>> {
+        &self.title_button_down
+    }
+
     pub fn render_for_screen_cast<R: NiriRenderer>(
         &self,
         renderer: &mut R,
@@ -662,6 +678,14 @@ impl LayoutElement for Mapped {
 
     fn id(&self) -> &Self::Id {
         &self.window
+    }
+
+    fn title(&self) -> Option<String> {
+        with_toplevel_role(self.toplevel(), |role| role.title.clone())
+    }
+
+    fn app_id(&self) -> Option<String> {
+        with_toplevel_role(self.toplevel(), |role| role.app_id.clone())
     }
 
     fn update_config(&mut self, blur_config: niri_config::Blur) {

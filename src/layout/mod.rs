@@ -247,6 +247,14 @@ pub trait LayoutElement {
 
     fn is_urgent(&self) -> bool;
 
+    /// angel-niri (stacking.rs): the title and app id, for its title bar.
+    fn title(&self) -> Option<String> {
+        None
+    }
+    fn app_id(&self) -> Option<String> {
+        None
+    }
+
     /// angel-niri: tells the window it is minimized (out of the layout) or back.
     /// angel-niri (scene.rs): drawn under the bottom layer-shell layer now.
     fn is_behind_scene(&self) -> bool {
@@ -374,6 +382,9 @@ pub struct Layout<W: LayoutElement> {
     /// angel-niri (stacking.rs): the windows the stacking mode floated, to tile again when it
     /// ends.
     stacked: Vec<W::Id>,
+    /// angel-niri (stacking.rs): a window just shaken while dragged, and the others on its
+    /// workspace.
+    shaken: Option<(W::Id, Vec<W::Id>)>,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -472,6 +483,8 @@ struct InteractiveMoveData<W: LayoutElement> {
     pub(self) velocity: crate::window_throw::Velocity,
     /// angel-niri (stacking.rs): where the window snaps when let go.
     pub(self) snap: Option<crate::stacking::Snap>,
+    /// angel-niri (stacking.rs): whether it is being shaken.
+    pub(self) shake: crate::stacking::Shake,
 }
 
 #[derive(Debug)]
@@ -758,6 +771,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            shaken: None,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -785,6 +799,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            shaken: None,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -2465,6 +2480,23 @@ impl<W: LayoutElement> Layout<W> {
         mon.window_under(pos_within_output)
     }
 
+    /// angel-niri (stacking_title.rs): the part of a titled window's frame under the pointer, and
+    /// the window.
+    pub fn frame_part_under(
+        &self,
+        output: &Output,
+        pos_within_output: Point<f64, Logical>,
+    ) -> Option<(W::Id, crate::stacking_title::FramePart)> {
+        if self
+            .interactive_moved_window_under(output, pos_within_output)
+            .is_some()
+        {
+            return None;
+        }
+        let mon = self.monitor_for_output(output)?;
+        mon.frame_part_under(pos_within_output)
+    }
+
     pub fn resize_edges_under(
         &self,
         output: &Output,
@@ -4102,6 +4134,8 @@ impl<W: LayoutElement> Layout<W> {
 
                 tile.stop_move_animations();
                 tile.interactive_move_offset = Point::from((0., 0.));
+                // angel-niri (stacking_title.rs): dragged, it keeps its title bar.
+                tile.in_floating = is_floating;
                 tile.window().output_enter(&output);
                 tile.window().set_preferred_scale_transform(
                     output.current_scale(),
@@ -4144,6 +4178,7 @@ impl<W: LayoutElement> Layout<W> {
                     workspace_config,
                     velocity: Default::default(),
                     snap: None,
+                    shake: Default::default(),
                 };
                 data.velocity
                     .add(self.clock.now(), data.pointer_pos_within_output);
@@ -4220,6 +4255,21 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 move_.pointer_pos_within_output = pointer_pos_within_output;
+
+                // angel-niri (stacking.rs): shaken, the other windows go.
+                if crate::stacking::on()
+                    && move_.is_floating
+                    && move_.shake.feed(delta.x, self.clock.now())
+                {
+                    let others = self
+                        .monitor_for_output(&move_.output)
+                        .map(|mon| {
+                            let ws = mon.active_workspace_ref();
+                            ws.windows().map(|win| win.id().clone()).collect()
+                        })
+                        .unwrap_or_default();
+                    self.shaken = Some((window.clone(), others));
+                }
 
                 // angel-niri (stacking.rs): a floating window dragged to an edge snaps there.
                 move_.snap = (crate::stacking::on() && move_.is_floating && !self.overview_open)
@@ -5226,6 +5276,30 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     /// Takes the window out of the layout, remembering its place. Returns whether it did.
+    /// angel-niri (stacking.rs): where a floating window sits snapped (`Some(None)`: free);
+    /// `None` when it isn't floating.
+    pub fn floating_snap(&self, window: &W::Id) -> Option<Option<crate::stacking::Snap>> {
+        self.workspaces()
+            .find(|(_, _, ws)| ws.floating().has_window(window))
+            .map(|(_, _, ws)| ws.floating().snap(window))
+    }
+
+    /// angel-niri (stacking.rs): snaps a floating window, or gives it back its own place.
+    pub fn set_floating_snap(&mut self, window: &W::Id, snap: Option<crate::stacking::Snap>) {
+        if let Some(ws) = self
+            .workspaces_mut()
+            .find(|ws| ws.floating().has_window(window))
+        {
+            ws.set_floating_snap(window, snap);
+        }
+    }
+
+    /// angel-niri (stacking.rs): the window just shaken while dragged, and the others on its
+    /// workspace.
+    pub fn take_stacking_shake(&mut self) -> Option<(W::Id, Vec<W::Id>)> {
+        self.shaken.take()
+    }
+
     /// angel-niri (stacking.rs): turns the stacking mode on or off. On, every workspace floats
     /// its columns and new windows open floating; off, the columns come back as they were and
     /// the windows floated meanwhile join them. Minimized windows come back the same way.
@@ -5234,6 +5308,10 @@ impl<W: LayoutElement> Layout<W> {
             return;
         }
         crate::stacking::set_flag(on);
+        // Windows that floated already get or lose their title bars.
+        for ws in self.workspaces_mut() {
+            ws.refresh_floating_sizes();
+        }
 
         if on {
             let mut stacked = Vec::new();

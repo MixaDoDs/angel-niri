@@ -34,6 +34,7 @@ pub mod scene;
 #[cfg(feature = "xdp-gnome-screencast")]
 pub mod screencasting;
 pub mod stacking;
+pub mod stacking_title;
 pub mod ui;
 pub mod utils;
 pub mod window;

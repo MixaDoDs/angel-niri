@@ -480,6 +480,9 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                              snapshot {snapshot:?}"
                         );
                     }
+                    Event::WindowMenuRequested { id, output, pos } => {
+                        println!("Window menu requested: id {id}, on {output} at {pos:?}");
+                    }
                     Event::WindowClosed { id } => {
                         println!("Window closed: {id}");
                     }

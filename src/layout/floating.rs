@@ -470,6 +470,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     fn add_tile_at(&mut self, mut idx: usize, mut tile: Tile<W>, activate: bool) {
+        tile.in_floating = true;
         tile.update_config(self.view_size, self.scale, self.options.clone());
 
         // Restore the previous floating window size, and in case the tile is fullscreen,
@@ -521,6 +522,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.insert(idx, tile);
 
         self.bring_up_descendants_of(idx);
+    }
+
+    /// angel-niri (stacking_title.rs): the tiles' sizes again, after title bars came or went.
+    pub fn refresh_sizes(&mut self) {
+        for (tile, data) in zip(&self.tiles, &mut self.data) {
+            data.update(tile);
+        }
     }
 
     /// angel-niri (stacking.rs): where the window sits snapped, if it does.
@@ -638,6 +646,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
     fn remove_tile_by_idx(&mut self, idx: usize) -> RemovedTile<W> {
         let mut tile = self.tiles.remove(idx);
+        tile.in_floating = false;
         let data = self.data.remove(idx);
 
         if self.tiles.is_empty() {

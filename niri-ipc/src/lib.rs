@@ -376,13 +376,20 @@ pub enum Action {
     ///
     /// On, every column floats where it is on screen and new windows open floating; off, the
     /// columns come back as they were (order, width, workspace) and the windows opened meanwhile
-    /// join them at the end. Windows that floated before stay floating.
+    /// join them at the end. Windows that floated before stay floating. While on, floating windows
+    /// that leave their decorations to the compositor get pixel title bars, snap to the edges when
+    /// dragged there, and Mod+arrows snap the focused one.
     #[cfg_attr(feature = "clap", clap(about = "Turn the stacking mode on or off"))]
     SetStackingMode {
         /// On (`true`, the default) or off.
         #[serde(default = "default_true")]
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
+        /// Font of the window titles, "Family SIZE" (size in logical pixels); a pixel font is
+        /// drawn without antialiasing. Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        title_font: Option<String>,
     },
     /// Open pinned programs where they are pinned (angel-niri).
     ///
@@ -2025,6 +2032,16 @@ pub enum Event {
         rect: Option<[f64; 4]>,
         /// Path of a PNG snapshot of the window, cut to its geometry, if one was made.
         snapshot: Option<String>,
+    },
+    /// A window's title bar was right-clicked while stacking (angel-niri): the shell shows its
+    /// window menu.
+    WindowMenuRequested {
+        /// Id of the window.
+        id: u64,
+        /// Output the pointer is on.
+        output: String,
+        /// Where the pointer is on that output, in logical pixels.
+        pos: [f64; 2],
     },
     /// A toplevel window was closed.
     WindowClosed {

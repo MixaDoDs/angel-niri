@@ -1610,6 +1610,19 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
+    /// angel-niri (stacking_title.rs): the part of a titled window's frame under the pointer.
+    pub fn frame_part_under(
+        &self,
+        pos_within_output: Point<f64, Logical>,
+    ) -> Option<(W::Id, crate::stacking_title::FramePart)> {
+        if self.overview_progress.is_some() {
+            return None;
+        }
+
+        let (ws, geo) = self.workspace_under(pos_within_output)?;
+        ws.frame_part_under(pos_within_output - geo.loc)
+    }
+
     pub fn resize_edges_under(&self, pos_within_output: Point<f64, Logical>) -> Option<ResizeEdge> {
         if self.overview_progress.is_some() {
             return None;

@@ -1,4 +1,5 @@
 use core::f64;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -25,6 +26,7 @@ use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::clipped_surface::{ClippedSurfaceRenderElement, RoundedCornerDamage};
 use crate::render_helpers::damage::ExtraDamage;
 use crate::render_helpers::offscreen::{OffscreenBuffer, OffscreenRenderElement};
+use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::resize::ResizeRenderElement;
 use crate::render_helpers::shader_element::ShaderRenderElement;
@@ -32,8 +34,10 @@ use crate::render_helpers::shaders::ProgramType;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+use crate::render_helpers::texture::TextureRenderElement;
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::{RenderCtx, RenderTarget};
+use crate::stacking_title::{self, FramePart, TitleBar, TITLE_HEIGHT};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
     baba_is_float_offset, round_logical_in_physical, round_logical_in_physical_max1,
@@ -120,6 +124,13 @@ pub struct Tile<W: LayoutElement> {
     /// angel-niri (window_throw.rs): the tile drawn once more to be squashed or stretched.
     deform_offscreen: OffscreenBuffer,
 
+    /// angel-niri (stacking_title.rs): whether the tile is floating (or dragged from floating),
+    /// where it gets a title bar while stacking.
+    pub(super) in_floating: bool,
+    /// angel-niri (stacking_title.rs): its title bar, and whether it shows as the active one.
+    title_bar: RefCell<TitleBar>,
+    title_active: bool,
+
     /// Snapshot of the last render for use in the close animation.
     unmap_snapshot: Option<TileRenderSnapshot>,
 
@@ -156,6 +167,7 @@ niri_render_elements! {
         Deform = RescaleRenderElement<OffscreenRenderElement>,
         ExtraDamage = ExtraDamage,
         BackgroundEffect = BackgroundEffectElement,
+        Title = PrimaryGpuTextureRenderElement,
     }
 }
 
@@ -241,6 +253,9 @@ impl<W: LayoutElement> Tile<W> {
             wobble: None,
             wobble_grab: (0.5, 0.5),
             deform_offscreen: OffscreenBuffer::default(),
+            in_floating: false,
+            title_bar: RefCell::default(),
+            title_active: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
             view_size,
@@ -444,8 +459,7 @@ impl<W: LayoutElement> Tile<W> {
 
         let window_size = self.window_size();
         let radius = self
-            .window
-            .geometry_corner_radius()
+            .window_clip_radius()
             .fit_to(window_size.w as f32, window_size.h as f32);
         self.rounded_corner_damage.set_corner_radius(radius);
     }
@@ -587,6 +601,7 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn update_render_elements(&mut self, is_active: bool, view_rect: Rectangle<f64, Logical>) {
+        self.title_active = is_active;
         let rules = self.window.rules();
         let animated_tile_size = self.animated_tile_size();
         let expanded_progress = self.expanded_progress();
@@ -891,6 +906,42 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
+    /// angel-niri (stacking_title.rs): whether the tile shows a title bar: floating while
+    /// stacking, its window leaving the decorations to the compositor.
+    pub fn is_titled(&self) -> bool {
+        self.in_floating
+            && crate::stacking::on()
+            && self.sizing_mode.is_normal()
+            && self.window.has_ssd()
+    }
+
+    fn title_height(&self) -> f64 {
+        if self.is_titled() {
+            TITLE_HEIGHT
+        } else {
+            0.
+        }
+    }
+
+    /// angel-niri (stacking_title.rs): the part of its frame at `point` (as for `hit()`): the
+    /// title bar, a button, an edge to resize by.
+    pub fn frame_part(&self, point: Point<f64, Logical>) -> Option<FramePart> {
+        if !self.is_titled() {
+            return None;
+        }
+        stacking_title::frame_part(point - self.bob_offset(), self.tile_size())
+    }
+
+    /// The window's corners, the top ones square under a title bar.
+    fn window_clip_radius(&self) -> CornerRadius {
+        let mut radius = self.window.geometry_corner_radius();
+        if self.is_titled() {
+            radius.top_left = 0.;
+            radius.top_right = 0.;
+        }
+        radius
+    }
+
     pub fn effective_border_width(&self) -> Option<f64> {
         if !self.sizing_mode.is_normal() {
             return None;
@@ -938,7 +989,9 @@ impl<W: LayoutElement> Tile<W> {
         // - During animations, the window remains centered within the tile; this is important for
         //   the to/from fullscreen animation.
         loc.x += (target_size.w - window_size.w) / 2.;
-        loc.y += (target_size.h - window_size.h) / 2.;
+        // angel-niri (stacking_title.rs): below its title bar.
+        let title = self.title_height();
+        loc.y += title + (target_size.h - title - window_size.h) / 2.;
 
         // Round to physical pixels.
         loc = loc
@@ -963,6 +1016,7 @@ impl<W: LayoutElement> Tile<W> {
             size.w += width * 2.;
             size.h += width * 2.;
         }
+        size.h += self.title_height();
 
         size
     }
@@ -982,6 +1036,7 @@ impl<W: LayoutElement> Tile<W> {
             size.w += width * 2.;
             size.h += width * 2.;
         }
+        size.h += self.title_height();
 
         size
     }
@@ -1063,7 +1118,13 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     fn is_in_activation_region(&self, point: Point<f64, Logical>) -> bool {
-        let activation_region = Rectangle::from_size(self.tile_size());
+        let mut activation_region = Rectangle::from_size(self.tile_size());
+        // angel-niri (stacking_title.rs): and the edges grabbed around it.
+        if self.is_titled() {
+            let grab = stacking_title::GRAB;
+            activation_region.loc -= Point::from((grab, grab));
+            activation_region.size += Size::from((grab * 2., grab * 2.));
+        }
         activation_region.contains(point)
     }
 
@@ -1095,6 +1156,7 @@ impl<W: LayoutElement> Tile<W> {
             size.w = f64::max(1., size.w - width * 2.);
             size.h = f64::max(1., size.h - width * 2.);
         }
+        size.h = f64::max(1., size.h - self.title_height());
 
         // The size request has to be i32 unfortunately, due to Wayland. We floor here instead of
         // round to avoid situations where proportionally-sized columns don't fit on the screen
@@ -1116,6 +1178,7 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn tile_height_for_window_height(&self, size: f64) -> f64 {
+        let size = size + self.title_height();
         if self.border.is_off() {
             size
         } else {
@@ -1132,6 +1195,7 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn window_height_for_tile_height(&self, size: f64) -> f64 {
+        let size = size - self.title_height();
         if self.border.is_off() {
             size
         } else {
@@ -1256,8 +1320,7 @@ impl<W: LayoutElement> Tile<W> {
         // that submit a full-sized buffer before acking the fullscreen state (Firefox).
         let clip_to_geometry = fullscreen_progress < 1. && rules.clip_to_geometry == Some(true);
         let radius = self
-            .window
-            .geometry_corner_radius()
+            .window_clip_radius()
             .scaled_by(1. - expanded_progress as f32);
 
         // Popups go on top, whether it's resize or not.
@@ -1269,6 +1332,34 @@ impl<W: LayoutElement> Tile<W> {
             xray_pos,
             &mut |elem| push(elem.into()),
         );
+
+        // angel-niri (stacking_title.rs): the title bar, under the popups.
+        if self.is_titled() {
+            let width = self.animated_tile_size().w;
+            let title = self.window.title().unwrap_or_default();
+            let app_id = self.window.app_id().unwrap_or_default();
+            let color = self.options.layout.focus_ring.active_color;
+            let buffer = self.title_bar.borrow_mut().texture(
+                ctx.renderer.as_gles_renderer(),
+                &title,
+                &app_id,
+                width,
+                self.scale,
+                self.title_active,
+                color,
+            );
+            if let Some(buffer) = buffer {
+                let elem = TextureRenderElement::from_texture_buffer(
+                    buffer,
+                    location,
+                    1.,
+                    None,
+                    None,
+                    Kind::Unspecified,
+                );
+                push(PrimaryGpuTextureRenderElement(elem).into());
+            }
+        }
 
         // angel-niri (inactive_dim.rs): the dots over the window, under its popups
         if self.dim_drawn.is_some() {
