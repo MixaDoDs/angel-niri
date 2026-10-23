@@ -973,6 +973,15 @@ impl State {
             Action::SetRememberWindows(on) => {
                 self.niri.set_remember_windows(on);
             }
+            Action::SetAppPlace(app_id, place) => {
+                let spot = place.map(|(output, idx, name, floating)| crate::remember::Spot {
+                    output,
+                    workspace: name,
+                    workspace_idx: usize::from(idx.max(1) - 1),
+                    floating,
+                });
+                self.niri.set_app_place(app_id, spot);
+            }
             Action::SetClipboardKeep(on) => {
                 crate::clipboard_keep::set(on);
             }

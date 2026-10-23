@@ -277,9 +277,6 @@ impl CompositorHandler for State {
                 // Must start the close animation before window.on_commit().
                 let transaction = Transaction::new();
                 if !is_mapped {
-                    // angel-niri (remember.rs): its size as it was shown
-                    self.niri.remember_window(surface);
-
                     let blocker = transaction.blocker();
                     self.backend.with_primary_renderer(|renderer| {
                         self.niri

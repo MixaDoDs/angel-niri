@@ -372,19 +372,47 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
-    /// Open a program's windows where its last one was (angel-niri).
+    /// Open pinned programs where they are pinned (angel-niri).
     ///
-    /// When a window closes, its program's output, workspace and size (and a floating one's
-    /// position) are remembered; its next window opens there, unless window rules say otherwise.
+    /// The places are pinned with `set-app-place`; turned off, they are kept but not used.
     #[cfg_attr(
         feature = "clap",
-        clap(about = "Open windows where their program's last one was")
+        clap(about = "Open pinned programs where they are pinned")
     )]
     SetRememberWindows {
-        /// Remember (`true`, the default) or forget everything.
+        /// Use the pins (`true`, the default) or not.
         #[serde(default = "default_true")]
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
+    },
+    /// Pin where a program's first window opens, or forget it (angel-niri).
+    ///
+    /// Its first window opens on that output and workspace, floating or not, and the view goes
+    /// there; a second window, dialogs and a missing output open as always. Window rules win.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Pin where a program's first window opens")
+    )]
+    SetAppPlace {
+        /// The program's app-id.
+        #[cfg_attr(feature = "clap", arg(long))]
+        app_id: String,
+        /// The output; without it the program's place is forgotten.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        output: Option<String>,
+        /// The workspace's index on the output, from 1.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1))]
+        #[serde(default)]
+        workspace: u8,
+        /// The workspace's name (wins over the index).
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        workspace_name: Option<String>,
+        /// Open floating.
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = false))]
+        #[serde(default)]
+        floating: bool,
     },
     /// Keep the pointer on a fullscreen game's output (angel-niri).
     ///

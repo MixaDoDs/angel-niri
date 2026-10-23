@@ -894,7 +894,6 @@ impl XdgShellHandler for State {
         {
             // An unmapped toplevel got destroyed.
             self.niri.remember.targets.remove(surface.wl_surface());
-            self.niri.remember.app_ids.remove(surface.wl_surface());
             return;
         }
 
@@ -930,9 +929,6 @@ impl XdgShellHandler for State {
         let id = mapped.id();
         self.niri
             .stop_casts_for_target(CastTarget::Window { id: id.get() });
-        // angel-niri (remember.rs)
-        self.niri.remember_window(surface.wl_surface());
-
         self.store_unmap_snapshot(&window, output.as_ref());
 
         let transaction = Transaction::new();
@@ -1120,12 +1116,13 @@ impl State {
             WindowRef::Unmapped(unmapped),
             self.niri.is_at_startup,
         );
-        // angel-niri (remember.rs): where its program's last window was
+        // angel-niri (remember.rs): where its program is pinned
         let remembered_ws = crate::remember::apply(
-            &mut self.niri.remember,
+            &self.niri.remember,
             &self.niri.layout,
             &mut rules,
             toplevel,
+            self.niri.is_at_startup,
         );
 
         let Unmapped { window, state, .. } = unmapped;

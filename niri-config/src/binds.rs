@@ -161,6 +161,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetRememberWindows(bool),
     #[knuffel(skip)]
+    SetAppPlace(String, Option<(String, u8, Option<String>, bool)>),
+    #[knuffel(skip)]
     SetMinimizeFade(bool),
     #[knuffel(skip)]
     SetClipboardKeep(bool),
@@ -486,6 +488,16 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetTearing { on, output } => Self::SetTearing(on, output),
             niri_ipc::Action::SetPointerLock { on, output } => Self::SetPointerLock(on, output),
             niri_ipc::Action::SetRememberWindows { on } => Self::SetRememberWindows(on),
+            niri_ipc::Action::SetAppPlace {
+                app_id,
+                output,
+                workspace,
+                workspace_name,
+                floating,
+            } => Self::SetAppPlace(
+                app_id,
+                output.map(|o| (o, workspace, workspace_name, floating)),
+            ),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
             niri_ipc::Action::SetClipboardKeep { on } => Self::SetClipboardKeep(on),
             niri_ipc::Action::SetCastPause {
