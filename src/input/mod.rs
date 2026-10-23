@@ -988,6 +988,9 @@ impl State {
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }
+            Action::SnapshotWindow(id, path) => {
+                self.snapshot_window(id, path.into());
+            }
             Action::SetStackingMode(on, title_font, title_style) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);

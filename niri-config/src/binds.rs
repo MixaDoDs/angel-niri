@@ -165,6 +165,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetMinimizeFade(bool),
     #[knuffel(skip)]
+    SnapshotWindow(u64, String),
+    #[knuffel(skip)]
     SetStackingMode(bool, Option<String>, Option<String>),
     #[knuffel(skip)]
     SetClipboardKeep(bool),
@@ -501,6 +503,7 @@ impl From<niri_ipc::Action> for Action {
                 output.map(|o| (o, workspace, workspace_name, floating)),
             ),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
+            niri_ipc::Action::SnapshotWindow { id, path } => Self::SnapshotWindow(id, path),
             niri_ipc::Action::SetStackingMode {
                 on,
                 title_font,

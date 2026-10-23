@@ -23,11 +23,11 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Rectangle, Scale, Transform};
 
 use crate::layout::workspace::WorkspaceId;
-use crate::utils::transaction::Transaction;
 use crate::layout::LayoutElement as _;
 use crate::niri::State;
 use crate::render_helpers::render_to_vec;
 use crate::render_helpers::{RenderCtx, RenderTarget};
+use crate::utils::transaction::Transaction;
 use crate::utils::write_png_rgba8;
 use crate::window::Mapped;
 
@@ -227,6 +227,46 @@ impl State {
             self.niri.queue_redraw_all();
         }
         true
+    }
+}
+
+impl State {
+    /// `snapshot-window`: the window as it looks now, saved to `path` in a thread.
+    pub fn snapshot_window(&mut self, id: u64, path: PathBuf) {
+        let Some((Some(mon), mapped)) =
+            self.niri.layout.windows().find(|(_, m)| m.id().get() == id)
+        else {
+            return;
+        };
+        let output = mon.output().clone();
+        let mut pixels = None;
+        self.backend.with_primary_renderer(|renderer| {
+            match render_window(renderer, &output, mapped) {
+                Ok(x) => pixels = Some(x),
+                Err(err) => warn!("error snapshotting a window: {err:?}"),
+            }
+        });
+        let Some((w, h, pixels)) = pixels else {
+            return;
+        };
+        thread::spawn(move || {
+            let mut buf = vec![];
+            let saved = write_png_rgba8(std::io::Cursor::new(&mut buf), w, h, &pixels)
+                .map_err(anyhow::Error::from)
+                .and_then(|()| {
+                    if let Some(dir) = path.parent() {
+                        std::fs::create_dir_all(dir)?;
+                    }
+                    // written next to it and moved over, so a reader never sees half a file
+                    let tmp = path.with_extension("part");
+                    std::fs::write(&tmp, &buf)?;
+                    std::fs::rename(&tmp, &path)?;
+                    Ok(())
+                });
+            if let Err(err) = saved {
+                warn!("error saving a window snapshot: {err:?}");
+            }
+        });
     }
 }
 

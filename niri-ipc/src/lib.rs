@@ -372,6 +372,19 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Save how a window looks now to a PNG, quietly (angel-niri).
+    ///
+    /// For a taskbar's previews: unlike `screenshot-window` nothing goes to the clipboard and no
+    /// screenshot event is sent; windows blocked out from screen casts stay blocked out.
+    #[cfg_attr(feature = "clap", clap(about = "Save how a window looks now to a PNG"))]
+    SnapshotWindow {
+        /// Id of the window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: u64,
+        /// Where to save it.
+        #[cfg_attr(feature = "clap", arg(long))]
+        path: String,
+    },
     /// Turn the stacking mode on or off (angel-niri).
     ///
     /// On, every column floats where it is on screen and new windows open floating; off, the
