@@ -5321,9 +5321,9 @@ impl<W: LayoutElement> Layout<W> {
                 stacked.extend(ws.enter_stacking());
             }
             for min in &mut self.minimized {
+                // Its column is kept for when it comes back after stacking.
                 if !min.removed.is_floating {
                     min.removed.is_floating = true;
-                    min.column_idx = None;
                     stacked.push(min.removed.tile.window().id().clone());
                 }
             }
@@ -5396,6 +5396,10 @@ impl<W: LayoutElement> Layout<W> {
             mut workspace_id,
             mut column_idx,
         } = self.minimized.remove(idx);
+        // angel-niri (stacking.rs): a column it had before stacking only counts once tiled again.
+        if removed.is_floating {
+            column_idx = None;
+        }
         if let Some(to) = to.filter(|to| self.find_workspace_by_id(*to).is_some()) {
             if to != workspace_id {
                 workspace_id = to;

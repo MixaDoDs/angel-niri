@@ -263,3 +263,21 @@ fn stacking_drag_to_edge_snaps() {
     assert_eq!(at, None);
     assert_eq!(size.map(|s| (s.w, s.h)), Some((300, 200)));
 }
+
+// a window minimized from its column before stacking comes back into that column after it
+#[test]
+fn stacking_keeps_the_column_of_a_minimized_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 100, 100);
+    let b = open(&mut f, id, 100, 100);
+    let c = open(&mut f, id, 100, 100);
+    assert!(f.niri().layout.minimize_window(&a));
+
+    set_stacking(&mut f, id, true);
+    set_stacking(&mut f, id, false);
+    assert!(f.niri().layout.unminimize_window(&a, false, None));
+    f.double_roundtrip(id);
+    assert_eq!(columns(&mut f), [vec![a], vec![b], vec![c]]);
+}
