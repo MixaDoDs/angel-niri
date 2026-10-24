@@ -1,20 +1,20 @@
 //! angel-niri (stacking.rs): the title bars of windows while stacking.
 //!
 //! A floating window that left its decorations to the compositor (xdg-decoration server side) gets
-//! a pixel title bar like Windows 98's: its icon and title on the left in the shell's title font,
-//! minimize, maximize and close on the right, all on the art-pixel grid. The active window's bar
-//! is in the focus ring's active colour, the others' in a dim grey of it; the buttons take their
-//! face from the bar, so a shell that recolours the ring recolours them too. Windows that draw
-//! their own title bars get none.
+//! a pixel title bar: three round buttons on the left like traffic lights — close, minimize,
+//! maximize in red, yellow and green, their glyphs shown while the pointer is over them — and its
+//! icon and title in the middle in the shell's title font, all on the art-pixel grid. The active
+//! window's bar is in the focus ring's active colour and tints the lights, the others' in a dim
+//! grey of it with grey lights; a shell that recolours the ring recolours them too. Windows that
+//! draw their own title bars get none.
 //!
 //! The icon is the shell's: `$XDG_RUNTIME_DIR/angel-niri/title-icons/<app id>.png`, drawn eight
-//! art pixels square with nearest filtering; a window without one has its title start at the left.
+//! art pixels square with nearest filtering before the title.
 //!
 //! Around such a window the pointer also grabs its edges to resize it, `GRAB` px outside.
 //!
-//! The Mac look (`--title-style mac`, Golden Gate) has three round pixel buttons on the left —
-//! close, minimize, maximize in red, yellow and green, grey on inactive windows — and the title
-//! in the middle, without an icon, on a light grey bar.
+//! The Mac look (`--title-style mac`, Golden Gate) has the same buttons in Mac colours on a light
+//! grey bar, the title without an icon.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -74,28 +74,9 @@ pub enum FramePart {
     Edge(ResizeEdge),
 }
 
-/// The buttons of a title bar of `width`, right to left on the art-pixel grid: eight by seven art
-/// pixels each, minimize and maximize side by side, close two art pixels apart.
-fn buttons(width: f64) -> [(FramePart, Rectangle<f64, Logical>); 3] {
-    if mac() {
-        return mac_buttons();
-    }
-    let (w, h) = (8. * ART, 7. * ART);
-    let y = 2. * ART;
-    let right = (width / ART).floor() * ART;
-    let close = right - 2. * ART - w;
-    let maximize = close - 2. * ART - w;
-    let minimize = maximize - w;
-    let rect = |x: f64| Rectangle::new(Point::from((x, y)), Size::from((w, h)));
-    [
-        (FramePart::Minimize, rect(minimize)),
-        (FramePart::Maximize, rect(maximize)),
-        (FramePart::Close, rect(close)),
-    ]
-}
-
-/// The Mac look's buttons, left to right: six art pixels round, two apart, four from the left.
-fn mac_buttons() -> [(FramePart, Rectangle<f64, Logical>); 3] {
+/// The buttons, left to right: close, minimize, maximize, six art pixels round, two apart, four
+/// from the left.
+fn buttons() -> [(FramePart, Rectangle<f64, Logical>); 3] {
     let rect = |i: f64| {
         Rectangle::new(
             Point::from(((4. + 8. * i) * ART, 3. * ART)),
@@ -138,7 +119,7 @@ pub fn frame_part(pos: Point<f64, Logical>, size: Size<f64, Logical>) -> Option<
     if y >= TITLE_HEIGHT {
         return None;
     }
-    let part = buttons(w)
+    let part = buttons()
         .into_iter()
         .find(|(_, rect)| rect.contains(pos))
         .map_or(FramePart::Title, |(part, _)| part);
@@ -158,6 +139,7 @@ struct Look {
     corners: u32,
     icon: bool,
     mac: bool,
+    hover: bool,
 }
 
 /// One window's title bar, drawn once per look.
@@ -171,7 +153,7 @@ pub struct TitleBar {
 
 impl TitleBar {
     /// The bar of `width` logical px for a window, drawn if its look changed; `color` is the focus
-    /// ring's active colour.
+    /// ring's active colour, `hover` whether the pointer is over its buttons.
     #[allow(clippy::too_many_arguments)]
     pub fn texture(
         &mut self,
@@ -181,6 +163,7 @@ impl TitleBar {
         width: f64,
         scale: f64,
         active: bool,
+        hover: bool,
         color: Color,
     ) -> Option<TextureBuffer<GlesTexture>> {
         let icon_path = icon_path(app_id);
@@ -210,6 +193,7 @@ impl TitleBar {
             corners: crate::pixel_corners::pixel().to_bits(),
             icon,
             mac: mac(),
+            hover,
         };
         if self.look.as_ref() != Some(&look) {
             self.buffer = draw(renderer, &look, scale, color, icon_path.filter(|_| icon))
@@ -236,18 +220,22 @@ fn mix(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
 const WHITE: [f64; 3] = [1., 1., 1.];
 const BLACK: [f64; 3] = [0., 0., 0.];
 
-/// The button glyphs, eight by seven art pixels.
-const GLYPHS: [[&str; 7]; 3] = [
-    [
-        "........", "........", "........", "........", "........", "..####..", "........",
-    ],
-    [
-        "........", ".######.", ".######.", ".#....#.", ".#....#.", ".######.", "........",
-    ],
-    [
-        "........", ".##..##.", "..####..", "...##...", "..####..", ".##..##.", "........",
-    ],
+/// A round button, six by six art pixels.
+const LIGHT: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
+
+/// The glyphs on the buttons while the pointer is over them, four by four art pixels in the
+/// middle of each: close, minimize, maximize.
+const GLYPHS: [[&str; 4]; 3] = [
+    ["#..#", ".##.", ".##.", "#..#"],
+    ["....", "....", "####", "...."],
+    ["##..", "#...", "...#", "..##"],
 ];
+
+/// Red, yellow and green of the pixel skins, a little tinted by the bar (hellish in hell).
+const PIXEL_LIGHTS: [[f64; 3]; 3] = [[0.85, 0.29, 0.25], [0.93, 0.71, 0.22], [0.38, 0.73, 0.31]];
+
+/// The Mac look's red, yellow and green.
+const MAC_LIGHTS: [[f64; 3]; 3] = [[1., 0.37, 0.34], [1., 0.74, 0.18], [0.16, 0.78, 0.25]];
 
 fn draw(
     renderer: &mut GlesRenderer,
@@ -260,26 +248,34 @@ fn draw(
     let height = ((TITLE_HEIGHT * scale).round() as i32).max(1);
     // one art pixel in physical pixels, never blurred over two
     let ap = (ART * scale).round().max(1.);
-    let logical_width = f64::from(width) / scale;
 
-    let [r, g, b, _] = color.to_array_unpremul().map(f64::from);
-    let accent = [r, g, b];
-    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    let bg = if look.active {
-        accent
+    let (bg, text, lights, line) = if look.mac {
+        let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
+        let text = if look.active { [0.15; 3] } else { [0.55; 3] };
+        let lights = if look.active {
+            MAC_LIGHTS
+        } else {
+            [[0.8; 3]; 3]
+        };
+        (bg, text, lights, Some([0.78; 3]))
     } else {
-        mix([lum * 0.5; 3], accent, 0.2)
+        let [r, g, b, _] = color.to_array_unpremul().map(f64::from);
+        let accent = [r, g, b];
+        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let bg = if look.active {
+            accent
+        } else {
+            mix([lum * 0.5; 3], accent, 0.2)
+        };
+        let bg_lum = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2];
+        let text = if bg_lum > 0.5 { BLACK } else { WHITE };
+        let lights = if look.active {
+            PIXEL_LIGHTS.map(|c| mix(c, bg, 0.2))
+        } else {
+            [mix(bg, WHITE, 0.3); 3]
+        };
+        (bg, text, lights, None)
     };
-    let bg_lum = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2];
-    let text = if bg_lum > 0.5 { BLACK } else { WHITE };
-    let face = mix(bg, WHITE, 0.65);
-    let light = mix(face, WHITE, 0.7);
-    let shadow = mix(bg, BLACK, 0.55);
-    let glyph = mix(bg, BLACK, 0.85);
-
-    if look.mac {
-        return draw_mac(renderer, look, scale);
-    }
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
     let cr = cairo::Context::new(&surface)?;
@@ -289,141 +285,23 @@ fn draw(
         cr.rectangle(x, y, w, h);
         let _ = cr.fill();
     };
-
-    rect(&cr, bg, 0., 0., f64::from(width), f64::from(height));
-
-    // the top corners cut in steps like a pixel window's (Settings → Windows → Corners)
-    let corner = f64::from(f32::from_bits(look.corners)) * scale;
-    if corner > 0. {
-        let steps = 2.;
-        let step = corner.round().max(1.);
-        cr.set_operator(cairo::Operator::Clear);
-        for i in 0..steps as i32 {
-            let i = f64::from(i);
-            let w = step * (steps - i);
-            cr.rectangle(0., step * i, w, step);
-            cr.rectangle(f64::from(width) - w, step * i, w, step);
-        }
-        let _ = cr.fill();
-        cr.set_operator(cairo::Operator::Over);
-    }
-
-    // the buttons, raised one art pixel
-    for (glyph_rows, (_, button)) in GLYPHS.iter().zip(buttons(logical_width)) {
-        let x = (button.loc.x / ART).round() * ap;
-        let y = (button.loc.y / ART).round() * ap;
-        let (w, h) = (8. * ap, 7. * ap);
-        rect(&cr, shadow, x, y, w, h);
-        rect(&cr, light, x, y, w - ap, h - ap);
-        rect(&cr, face, x + ap, y + ap, w - 2. * ap, h - 2. * ap);
-        for (row, line) in glyph_rows.iter().enumerate() {
-            for (col, c) in line.chars().enumerate() {
-                if c == '#' {
-                    rect(&cr, glyph, x + col as f64 * ap, y + row as f64 * ap, ap, ap);
+    let sprite = |cr: &cairo::Context, c: [f64; 3], x: f64, y: f64, rows: &[&str]| {
+        for (row, line) in rows.iter().enumerate() {
+            for (col, ch) in line.chars().enumerate() {
+                if ch == '#' {
+                    rect(cr, c, x + col as f64 * ap, y + row as f64 * ap, ap, ap);
                 }
             }
         }
-    }
-
-    // the icon
-    let mut text_x = 3. * ap;
-    if let Some(path) = icon {
-        match load_icon(&path) {
-            Ok(icon) => {
-                let size = 8. * ap;
-                let (iw, ih) = (f64::from(icon.width()), f64::from(icon.height()));
-                cr.save()?;
-                cr.translate(2. * ap, 2. * ap);
-                cr.scale(size / iw.max(1.), size / ih.max(1.));
-                cr.set_source_surface(&icon, 0., 0.)?;
-                cr.source().set_filter(cairo::Filter::Nearest);
-                cr.paint()?;
-                cr.restore()?;
-                text_x = 12. * ap;
-            }
-            Err(err) => debug!("no title icon from {path:?}: {err:?}"),
-        }
-    }
-
-    // the title, ellipsized before the buttons
-    let font = if look.font.is_empty() {
-        "monospace 12"
-    } else {
-        &look.font
-    };
-    let mut font = FontDescription::from_string(font);
-    font.set_absolute_size((font.size() as f64 * scale).round());
-    let mut options = cairo::FontOptions::new()?;
-    options.set_antialias(cairo::Antialias::None);
-    options.set_hint_style(cairo::HintStyle::None);
-    let layout = pangocairo::functions::create_layout(&cr);
-    pangocairo::functions::context_set_font_options(&layout.context(), Some(&options));
-    layout.set_font_description(Some(&font));
-    layout.set_ellipsize(EllipsizeMode::End);
-    let text_end = (buttons(logical_width)[0].1.loc.x / ART).round() * ap - 2. * ap;
-    let text_width = (text_end - text_x).max(0.);
-    layout.set_width((text_width * f64::from(pangocairo::pango::SCALE)) as i32);
-    layout.set_text(&look.title);
-    let (_, text_height) = layout.pixel_size();
-    let text_y = ((f64::from(height) - f64::from(text_height)) / 2.).round();
-    cr.set_source_rgb(text[0], text[1], text[2]);
-    cr.move_to(text_x, text_y);
-    pangocairo::functions::show_layout(&cr, &layout);
-    drop(cr);
-
-    let data = surface.take_data()?;
-    Ok(TextureBuffer::from_memory(
-        renderer,
-        &data,
-        Fourcc::Argb8888,
-        (width, height),
-        false,
-        scale,
-        Transform::Normal,
-        Vec::new(),
-    )?)
-}
-
-/// A round button, six by six art pixels.
-const MAC_BUTTON: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
-
-/// The Mac look (see the module docs).
-fn draw_mac(
-    renderer: &mut GlesRenderer,
-    look: &Look,
-    scale: f64,
-) -> anyhow::Result<TextureBuffer<GlesTexture>> {
-    let width = look.width.max(1);
-    let height = ((TITLE_HEIGHT * scale).round() as i32).max(1);
-    let ap = (ART * scale).round().max(1.);
-
-    let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
-    let text = if look.active { [0.15; 3] } else { [0.55; 3] };
-    let lights: [[f64; 3]; 3] = if look.active {
-        [[1., 0.37, 0.34], [1., 0.74, 0.18], [0.16, 0.78, 0.25]]
-    } else {
-        [[0.8; 3]; 3]
     };
 
-    let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
-    let cr = cairo::Context::new(&surface)?;
-    cr.set_antialias(cairo::Antialias::None);
-    let rect = |cr: &cairo::Context, c: [f64; 3], x: f64, y: f64, w: f64, h: f64| {
-        cr.set_source_rgb(c[0], c[1], c[2]);
-        cr.rectangle(x, y, w, h);
-        let _ = cr.fill();
-    };
     rect(&cr, bg, 0., 0., f64::from(width), f64::from(height));
-    // a one art pixel line under the bar
-    rect(
-        &cr,
-        [0.78; 3],
-        0.,
-        f64::from(height) - ap,
-        f64::from(width),
-        ap,
-    );
+    if let Some(line) = line {
+        // a one art pixel line under the bar
+        rect(&cr, line, 0., f64::from(height) - ap, f64::from(width), ap);
+    }
 
+    // the top corners cut in steps like a pixel window's (Settings → Windows → Corners)
     let corner = f64::from(f32::from_bits(look.corners)) * scale;
     if corner > 0. {
         let step = corner.round().max(1.);
@@ -438,28 +316,22 @@ fn draw_mac(
         cr.set_operator(cairo::Operator::Over);
     }
 
-    for (color, (_, button)) in lights.iter().zip(mac_buttons()) {
+    for ((light, glyph), (_, button)) in lights.iter().zip(GLYPHS).zip(buttons()) {
         let x = (button.loc.x / ART).round() * ap;
         let y = (button.loc.y / ART).round() * ap;
-        for (row, line) in MAC_BUTTON.iter().enumerate() {
-            for (col, c) in line.chars().enumerate() {
-                if c == '#' {
-                    rect(
-                        &cr,
-                        *color,
-                        x + col as f64 * ap,
-                        y + row as f64 * ap,
-                        ap,
-                        ap,
-                    );
-                }
-            }
+        sprite(&cr, *light, x, y, &LIGHT);
+        if look.hover {
+            sprite(&cr, mix(*light, BLACK, 0.6), x + ap, y + ap, &glyph);
         }
     }
 
-    // the title in the middle, clear of the buttons on both sides
+    // the icon and the title in the middle, clear of the buttons on both sides
     let font = if look.font.is_empty() {
-        "sans 12"
+        if look.mac {
+            "sans 12"
+        } else {
+            "monospace 12"
+        }
     } else {
         &look.font
     };
@@ -472,15 +344,41 @@ fn draw_mac(
     pangocairo::functions::context_set_font_options(&layout.context(), Some(&options));
     layout.set_font_description(Some(&font));
     layout.set_ellipsize(EllipsizeMode::End);
-    layout.set_alignment(pangocairo::pango::Alignment::Center);
+
+    let icon = icon.filter(|_| !look.mac).and_then(|path| {
+        load_icon(&path)
+            .map_err(|err| debug!("no title icon from {path:?}: {err:?}"))
+            .ok()
+    });
+    let icon_size = 8. * ap;
+    let icon_room = if icon.is_some() {
+        icon_size + 2. * ap
+    } else {
+        0.
+    };
     let margin = (28. * ap).min(f64::from(width) / 2.);
-    let text_width = (f64::from(width) - 2. * margin).max(0.);
-    layout.set_width((text_width * f64::from(pangocairo::pango::SCALE)) as i32);
+    let text_room = (f64::from(width) - 2. * margin - icon_room).max(0.);
+    layout.set_width((text_room * f64::from(pangocairo::pango::SCALE)) as i32);
     layout.set_text(&look.title);
-    let (_, text_height) = layout.pixel_size();
+    let (text_width, text_height) = layout.pixel_size();
+    let left = ((f64::from(width) - icon_room - f64::from(text_width)) / 2.)
+        .max(margin)
+        .round();
+
+    if let Some(icon) = icon {
+        let (iw, ih) = (f64::from(icon.width()), f64::from(icon.height()));
+        cr.save()?;
+        cr.translate(left, 2. * ap);
+        cr.scale(icon_size / iw.max(1.), icon_size / ih.max(1.));
+        cr.set_source_surface(&icon, 0., 0.)?;
+        cr.source().set_filter(cairo::Filter::Nearest);
+        cr.paint()?;
+        cr.restore()?;
+    }
+
     let text_y = ((f64::from(height) - f64::from(text_height)) / 2.).round();
     cr.set_source_rgb(text[0], text[1], text[2]);
-    cr.move_to(margin, text_y);
+    cr.move_to(left + icon_room, text_y);
     pangocairo::functions::show_layout(&cr, &layout);
     drop(cr);
 
@@ -548,32 +446,14 @@ mod tests {
         let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size);
         assert_eq!(at(100., 10.), Some(FramePart::Title));
         assert_eq!(at(100., 100.), None, "the window itself");
-        // close: 2 art px from the right, 8 wide; maximize and minimize to its left
-        assert_eq!(at(400. - 4. - 8., 10.), Some(FramePart::Close));
-        assert_eq!(
-            at(400. - 4. - 16. - 4. - 8., 10.),
-            Some(FramePart::Maximize)
-        );
-        assert_eq!(
-            at(400. - 4. - 16. - 4. - 16. - 8., 10.),
-            Some(FramePart::Minimize)
-        );
-        assert_eq!(at(-3., 150.), Some(FramePart::Edge(ResizeEdge::LEFT)));
-        assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
-        assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
-        assert_eq!(at(-10., 150.), None, "beyond the grab");
-    }
-
-    #[test]
-    fn mac_frame_parts() {
-        set_mac(true);
-        let size = Size::from((400., 300.));
-        let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size);
         // close, minimize, maximize from the left: 4 art px in, 6 wide, 2 apart
         assert_eq!(at(10., 10.), Some(FramePart::Close));
         assert_eq!(at(26., 10.), Some(FramePart::Minimize));
         assert_eq!(at(42., 10.), Some(FramePart::Maximize));
         assert_eq!(at(390., 10.), Some(FramePart::Title));
-        set_mac(false);
+        assert_eq!(at(-3., 150.), Some(FramePart::Edge(ResizeEdge::LEFT)));
+        assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
+        assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
+        assert_eq!(at(-10., 150.), None, "beyond the grab");
     }
 }

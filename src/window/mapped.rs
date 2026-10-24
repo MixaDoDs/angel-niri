@@ -147,9 +147,11 @@ pub struct Mapped {
     last_interactive_resize_start: Cell<Option<(Duration, ResizeEdge)>>,
 
     /// angel-niri (stacking_title.rs): when its title bar was last clicked (for a double click),
-    /// and the title bar button held down, done when let go over it.
+    /// the title bar button held down, done when let go over it, and whether the pointer is over
+    /// the buttons.
     last_title_click: Cell<Option<Duration>>,
     title_button_down: Cell<Option<FramePart>>,
+    title_hover: Cell<bool>,
 
     /// Whether this window is in windowed (fake) fullscreen.
     ///
@@ -323,6 +325,7 @@ impl Mapped {
             last_interactive_resize_start: Cell::new(None),
             last_title_click: Cell::new(None),
             title_button_down: Cell::new(None),
+            title_hover: Cell::new(false),
             is_windowed_fullscreen: false,
             is_pending_windowed_fullscreen: false,
             uncommitted_windowed_fullscreen: Vec::new(),
@@ -528,6 +531,10 @@ impl Mapped {
 
     pub fn title_button_down(&self) -> &Cell<Option<FramePart>> {
         &self.title_button_down
+    }
+
+    pub fn set_title_hover(&self, hover: bool) -> bool {
+        self.title_hover.replace(hover) != hover
     }
 
     pub fn render_for_screen_cast<R: NiriRenderer>(
@@ -1005,6 +1012,10 @@ impl LayoutElement for Mapped {
         self.window.with_surfaces(|surface, data| {
             send_scale_transform(surface, data, scale, transform);
         });
+    }
+
+    fn title_hover(&self) -> bool {
+        self.title_hover.get()
     }
 
     fn has_ssd(&self) -> bool {

@@ -1346,6 +1346,7 @@ impl<W: LayoutElement> Tile<W> {
                 width,
                 self.scale,
                 self.title_active,
+                self.window.title_hover(),
                 color,
             );
             if let Some(buffer) = buffer {

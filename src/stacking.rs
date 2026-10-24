@@ -440,16 +440,32 @@ impl State {
         if pointer.is_grabbed() {
             return;
         }
-        let edges = on()
+        let under = on()
             .then(|| {
                 let (output, pos) = self.niri.output_under(pointer.current_location())?;
                 let output = output.clone();
-                match self.niri.layout.frame_part_under(&output, pos)?.1 {
-                    FramePart::Edge(edges) => Some(edges),
-                    _ => None,
-                }
+                self.niri.layout.frame_part_under(&output, pos)
             })
             .flatten();
+        let edges = match under {
+            Some((_, FramePart::Edge(edges))) => Some(edges),
+            _ => None,
+        };
+
+        // the buttons show their glyphs while the pointer is over any of them
+        let hovered = match &under {
+            Some((window, FramePart::Close | FramePart::Minimize | FramePart::Maximize)) => {
+                Some(window)
+            }
+            _ => None,
+        };
+        let mut changed = false;
+        for (_, mapped) in self.niri.layout.windows() {
+            changed |= mapped.set_title_hover(hovered == Some(&mapped.window));
+        }
+        if changed {
+            self.niri.queue_redraw_all();
+        }
 
         let cursor = &mut self.niri.cursor_manager;
         match edges {
