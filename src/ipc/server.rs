@@ -529,6 +529,8 @@ fn make_ipc_window(
     workspace_id: Option<WorkspaceId>,
     layout: WindowLayout,
 ) -> niri_ipc::Window {
+    // outside the role's lock: has_ssd() takes it too
+    let has_title_bar = crate::stacking::on() && mapped.is_floating() && mapped.has_ssd();
     with_toplevel_role(mapped.toplevel(), |role| niri_ipc::Window {
         id: mapped.id().get(),
         title: role.title.clone(),
@@ -542,7 +544,7 @@ fn make_ipc_window(
         is_shaded: mapped.shaded(),
         is_on_top: mapped.on_top(),
         is_sticky: mapped.sticky(),
-        has_title_bar: crate::stacking::on() && mapped.is_floating() && mapped.has_ssd(),
+        has_title_bar,
         layout,
         focus_timestamp: mapped.get_focus_timestamp().map(Timestamp::from),
     })
