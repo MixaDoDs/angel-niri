@@ -283,6 +283,23 @@ pub fn remember_decoration(toplevel: &ToplevelSurface, mode: DecorationMode) {
     });
 }
 
+/// Apps that draw nothing of their own when they go without server side decorations, so would sit
+/// bare while stacking: kitty with `hide_window_decorations` (the owner's). Every other app gets
+/// what it asked for: one that draws its own bar (Discord, Helium, frameless Electron) keeps it,
+/// with no second set of buttons from niri (the owner's call, 25.10).
+// shortcut: a fixed list, nothing tells such an app apart over the protocol; a setting when a
+// second app needs it.
+const BARE_APPS: &[&str] = &["kitty"];
+
+/// Whether stacking gives the window niri's title bar even though it asked to go without.
+pub fn forces_title(toplevel: &ToplevelSurface) -> bool {
+    crate::utils::with_toplevel_role(toplevel, |role| {
+        role.app_id
+            .as_deref()
+            .is_some_and(|id| BARE_APPS.contains(&id))
+    })
+}
+
 fn wanted_decoration(toplevel: &ToplevelSurface) -> Option<DecorationMode> {
     with_states(toplevel.wl_surface(), |states| {
         states
@@ -293,17 +310,16 @@ fn wanted_decoration(toplevel: &ToplevelSurface) -> Option<DecorationMode> {
 }
 
 impl State {
-    /// While stacking, every mapped window speaking xdg-decoration gets server side decorations
-    /// (so a pixel title bar), even one that asked for its own, as kitty with
-    /// `hide_window_decorations` does; out of it, each gets what it asked for back. Only mapped
-    /// windows: forcing a mode on SDL2 while it creates its window leaves the window hidden for
-    /// good (see `request_mode`).
+    /// While stacking, the mapped windows of `BARE_APPS` get server side decorations (so a pixel
+    /// title bar) even though they asked for their own; every other window has what it asked for,
+    /// and out of stacking all do. Only mapped windows: forcing a mode on SDL2 while it creates
+    /// its window leaves the window hidden for good (see `request_mode`).
     pub fn stacking_decorations(&mut self) {
         let on = on();
         let mut changed = Vec::new();
         for (_, mapped) in self.niri.layout.windows() {
             let toplevel = mapped.toplevel();
-            let want = if on {
+            let want = if on && forces_title(toplevel) {
                 DecorationMode::ServerSide
             } else {
                 wanted_decoration(toplevel).unwrap_or(DecorationMode::ServerSide)
