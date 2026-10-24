@@ -739,6 +739,12 @@ impl State {
             let workspace_id = ws_id.map(|id| id.get());
             let mut changed =
                 ipc_win.workspace_id != workspace_id || ipc_win.is_floating != mapped.is_floating();
+            // angel-niri (desk_flags.rs)
+            changed |= ipc_win.is_shaded != mapped.shaded()
+                || ipc_win.is_on_top != mapped.on_top()
+                || ipc_win.is_sticky != mapped.sticky()
+                || ipc_win.has_title_bar
+                    != (crate::stacking::on() && mapped.is_floating() && mapped.has_ssd());
 
             changed |= with_toplevel_role(mapped.toplevel(), |role| {
                 ipc_win.title != role.title || ipc_win.app_id != role.app_id
