@@ -433,7 +433,8 @@ impl State {
         let Some((window, part)) = self.niri.layout.frame_part_under(&output, pos) else {
             return false;
         };
-        if matches!(part, FramePart::Edge(_)) {
+        // the title bar itself: not its buttons, badges or edges
+        if part != FramePart::Title {
             return false;
         }
         let id = (self.niri.layout.windows())

@@ -265,6 +265,49 @@ fn mix(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
+/// WCAG relative luminance of an sRGB colour.
+fn luminance(c: [f64; 3]) -> f64 {
+    let lin = |v: f64| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+}
+
+/// WCAG contrast ratio of two colours.
+fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Black or white, whichever reads better on `bg`.
+fn ink(bg: [f64; 3]) -> [f64; 3] {
+    if contrast(BLACK, bg) >= contrast(WHITE, bg) {
+        BLACK
+    } else {
+        WHITE
+    }
+}
+
+/// `c` moved towards black or white (away from `bg`) until it stands `need` apart from it: a red
+/// light on hell's red bar turns dark red instead of melting into it.
+fn apart(c: [f64; 3], bg: [f64; 3], need: f64) -> [f64; 3] {
+    let toward = if luminance(bg) > 0.18 { BLACK } else { WHITE };
+    let mut t = 0.;
+    let mut out = c;
+    while contrast(out, bg) < need && t < 0.8 {
+        t += 0.05;
+        out = mix(c, toward, t);
+    }
+    out
+}
+
+/// How far a light stands from its bar at least.
+const LIGHT_CONTRAST: f64 = 2.;
+
 const WHITE: [f64; 3] = [1., 1., 1.];
 const BLACK: [f64; 3] = [0., 0., 0.];
 
@@ -272,20 +315,21 @@ const BLACK: [f64; 3] = [0., 0., 0.];
 const LIGHT: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
 
 /// The glyphs on the buttons while the pointer is over them, four by four art pixels in the
-/// middle of each: close, minimize, maximize.
+/// middle of each: close (×), minimize (–), maximize (+), all centred.
 const GLYPHS: [[&str; 4]; 3] = [
     ["#..#", ".##.", ".##.", "#..#"],
-    ["....", "....", "####", "...."],
-    ["##..", "#...", "...#", "..##"],
+    ["....", "####", "####", "...."],
+    [".##.", "####", "####", ".##."],
 ];
 
-/// The badges, six by six art pixels: a pin (on top), two desks (on every workspace).
+/// The badges, six by six art pixels, as the shell's menu draws them (widgets/Icons.js): an arrow
+/// up (on top), two desks, the front one filled (on every workspace).
 const BADGES: [[&str; 6]; 2] = [
-    ["..##..", ".####.", ".####.", "######", "..##..", "..#..."],
-    ["####..", "#..#..", "#.####", "###..#", "..#..#", "..####"],
+    ["..##..", ".####.", "######", "..##..", "..##..", "..##.."],
+    ["..####", "..#..#", "####.#", "######", "####..", "####.."],
 ];
 
-/// Red, yellow and green of the pixel skins, a little tinted by the bar (hellish in hell).
+/// Red, yellow and green of the pixel skins; on a bar of a near colour moved apart from it.
 const PIXEL_LIGHTS: [[f64; 3]; 3] = [[0.85, 0.29, 0.25], [0.93, 0.71, 0.22], [0.38, 0.73, 0.31]];
 
 /// The Mac look's red, yellow and green.
@@ -305,11 +349,11 @@ fn draw(
 
     let (bg, text, lights, line) = if look.mac {
         let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
-        let text = if look.active { [0.15; 3] } else { [0.55; 3] };
+        let text = if look.active { [0.15; 3] } else { [0.4; 3] };
         let lights = if look.active {
             MAC_LIGHTS
         } else {
-            [[0.8; 3]; 3]
+            [[0.7; 3]; 3]
         };
         (bg, text, lights, Some([0.78; 3]))
     } else {
@@ -321,12 +365,11 @@ fn draw(
         } else {
             mix([lum * 0.5; 3], accent, 0.2)
         };
-        let bg_lum = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2];
-        let text = if bg_lum > 0.5 { BLACK } else { WHITE };
+        let text = ink(bg);
         let lights = if look.active {
-            PIXEL_LIGHTS.map(|c| mix(c, bg, 0.2))
+            PIXEL_LIGHTS.map(|c| apart(c, bg, LIGHT_CONTRAST))
         } else {
-            [mix(bg, WHITE, 0.3); 3]
+            [apart(mix(bg, WHITE, 0.3), bg, LIGHT_CONTRAST); 3]
         };
         (bg, text, lights, None)
     };
@@ -375,7 +418,7 @@ fn draw(
         let y = (button.loc.y / ART).round() * ap;
         sprite(&cr, *light, x, y, &LIGHT);
         if look.hover {
-            sprite(&cr, mix(*light, BLACK, 0.6), x + ap, y + ap, &glyph);
+            sprite(&cr, mix(*light, ink(*light), 0.75), x + ap, y + ap, &glyph);
         }
     }
 
@@ -529,6 +572,21 @@ mod tests {
         assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
         assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
         assert_eq!(at(-10., 150.), None, "beyond the grab");
+    }
+
+    #[test]
+    fn lights_stand_apart_from_every_bar() {
+        // hell's circles and heaven's flavours whose accent sits near a light (the design review)
+        for hex in [
+            0xe2703f, 0xec7650, 0xec6a5a, 0xcfa64c, 0xa3bd4e, 0xfabd2f, 0x87b0b3, 0x58b8a0,
+        ] {
+            let bg = [16, 8, 0].map(|s| f64::from((hex >> s) & 0xff) / 255.);
+            for light in PIXEL_LIGHTS {
+                let c = apart(light, bg, LIGHT_CONTRAST);
+                assert!(contrast(c, bg) >= LIGHT_CONTRAST - 1e-9, "{hex:06x}");
+            }
+            assert!(contrast(ink(bg), bg) >= 4.5, "{hex:06x}");
+        }
     }
 
     #[test]
