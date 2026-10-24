@@ -1039,6 +1039,11 @@ impl<W: LayoutElement> Tile<W> {
         // angel-niri (stacking_title.rs): below its title bar.
         let title = self.title_height();
         loc.y += title + (target_size.h - title - window_size.h) / 2.;
+        // angel-niri (desk_flags.rs): rolling up shrinks the tile, not the window — it stays put
+        // under the title bar instead of being centred in what is left
+        if self.is_titled() {
+            loc.y += (window_size.h * self.shade_progress()).round() / 2.;
+        }
 
         // Round to physical pixels.
         loc = loc
