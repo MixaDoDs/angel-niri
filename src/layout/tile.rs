@@ -131,6 +131,11 @@ pub struct Tile<W: LayoutElement> {
     title_bar: RefCell<TitleBar>,
     title_active: bool,
 
+    /// angel-niri (desk_flags.rs): rolling up into the title bar or down from it, and whether it
+    /// was shaded when last looked at.
+    shade_anim: Option<Animation>,
+    shade_seen: bool,
+
     /// Snapshot of the last render for use in the close animation.
     unmap_snapshot: Option<TileRenderSnapshot>,
 
@@ -256,6 +261,8 @@ impl<W: LayoutElement> Tile<W> {
             in_floating: false,
             title_bar: RefCell::default(),
             title_active: false,
+            shade_anim: None,
+            shade_seen: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
             view_size,
@@ -465,6 +472,19 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn advance_animations(&mut self) {
+        // angel-niri (desk_flags.rs): the window rolls up under its title bar, or down
+        let shaded = self.is_shaded();
+        if shaded != self.shade_seen {
+            let from = self.shade_progress();
+            let to = if shaded { 1. } else { 0. };
+            let config = self.options.animations.window_resize.anim;
+            self.shade_anim = Some(Animation::new(self.clock.clone(), from, to, 0., config));
+            self.shade_seen = shaded;
+        }
+        if self.shade_anim.as_ref().is_some_and(|a| a.is_done()) {
+            self.shade_anim = None;
+        }
+
         if let Some(open) = &mut self.open_animation {
             if open.is_done() {
                 self.open_animation = None;
@@ -522,6 +542,7 @@ impl<W: LayoutElement> Tile<W> {
                 .is_some_and(|alpha| !alpha.anim.is_done())
             || self.squash.is_some()
             || self.wobble.is_some()
+            || self.shade_anim.is_some()
     }
 
     /// angel-niri (window_throw.rs): squashes the tile against the edge a throw hit.
@@ -920,6 +941,15 @@ impl<W: LayoutElement> Tile<W> {
         self.window.is_shaded() && self.is_titled()
     }
 
+    /// How far it is rolled up: 0 open, 1 only the title bar.
+    fn shade_progress(&self) -> f64 {
+        match &self.shade_anim {
+            Some(anim) => anim.value().clamp(0., 1.),
+            None if self.shade_seen && self.is_titled() => 1.,
+            None => 0.,
+        }
+    }
+
     fn title_extras(&self) -> stacking_title::Extras {
         stacking_title::Extras {
             edges: !self.is_shaded(),
@@ -1035,8 +1065,8 @@ impl<W: LayoutElement> Tile<W> {
         }
         size.h += self.title_height();
         // angel-niri (desk_flags.rs): shaded, only the title bar
-        if self.is_shaded() {
-            size.h -= self.window_size().h;
+        if self.is_titled() {
+            size.h -= (self.window_size().h * self.shade_progress()).round();
         }
 
         size
@@ -1059,8 +1089,8 @@ impl<W: LayoutElement> Tile<W> {
         }
         size.h += self.title_height();
         // angel-niri (desk_flags.rs): shaded, only the title bar
-        if self.is_shaded() {
-            size.h -= self.window_size().h;
+        if self.is_titled() {
+            size.h -= (self.window_size().h * self.shade_progress()).round();
         }
 
         size
@@ -1346,16 +1376,19 @@ impl<W: LayoutElement> Tile<W> {
 
         // Clip to geometry including during the fullscreen animation to help with buggy clients
         // that submit a full-sized buffer before acking the fullscreen state (Firefox).
-        let clip_to_geometry = fullscreen_progress < 1. && rules.clip_to_geometry == Some(true);
+        // angel-niri (desk_flags.rs): rolling, the window is cut off under the moving edge
+        let shade = self.shade_progress();
+        let clip_to_geometry =
+            (fullscreen_progress < 1. && rules.clip_to_geometry == Some(true)) || shade > 0.;
         let radius = self
             .window_clip_radius()
             .scaled_by(1. - expanded_progress as f32);
 
         // angel-niri (desk_flags.rs): a shaded tile draws its title bar and frame, not the window
-        let shaded = self.is_shaded();
+        let shaded = shade >= 1.;
 
         // Popups go on top, whether it's resize or not.
-        if !shaded {
+        if shade == 0. {
             self.window.render_popups(
                 ctx.r(),
                 window_render_loc,
@@ -1483,7 +1516,8 @@ impl<W: LayoutElement> Tile<W> {
         // If we're not resizing, render the window itself.
         let has_border_shader = BorderRenderElement::has_shader(ctx.renderer);
         if !pushed_resize {
-            let geo = Rectangle::new(window_render_loc, window_size);
+            let mut geo = Rectangle::new(window_render_loc, window_size);
+            geo.size.h = (window_size.h * (1. - shade)).max(1.);
             let radius = radius.fit_to(window_size.w as f32, window_size.h as f32);
 
             let clip_shader = ClippedSurfaceRenderElement::shader(ctx.renderer).cloned();

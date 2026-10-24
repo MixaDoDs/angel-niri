@@ -1003,6 +1003,7 @@ impl State {
                 }
                 if let Some(style) = title_style {
                     crate::stacking_title::set_mac(style == "mac");
+                    crate::stacking_title::set_light(style == "light");
                 }
                 if !on {
                     self.clear_window_flags();

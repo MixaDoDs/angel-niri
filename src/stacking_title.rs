@@ -51,6 +51,16 @@ const ICON_RETRY: Duration = Duration::from_secs(2);
 thread_local! {
     static FONT: RefCell<String> = const { RefCell::new(String::new()) };
     static MAC: Cell<bool> = const { Cell::new(false) };
+    static LIGHT_THEME: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the pixel bars are for a light theme (`--title-style light`): the inactive ones pale.
+pub fn set_light(light: bool) {
+    LIGHT_THEME.with(|cell| cell.set(light));
+}
+
+fn light() -> bool {
+    LIGHT_THEME.with(Cell::get)
 }
 
 /// Whether the title bars have the Mac look.
@@ -182,6 +192,7 @@ struct Look {
     corners: u32,
     icon: bool,
     mac: bool,
+    light: bool,
     hover: bool,
     on_top: bool,
     sticky: bool,
@@ -240,6 +251,7 @@ impl TitleBar {
             corners: crate::pixel_corners::pixel().to_bits(),
             icon,
             mac: mac(),
+            light: light(),
             hover,
             on_top: extras.on_top,
             sticky: extras.sticky,
@@ -324,8 +336,8 @@ const GLYPHS: [[&str; 4]; 3] = [
     [".##.", "####", "####", ".##."],
 ];
 
-/// The badges, six by six art pixels, as the shell's menu draws them (widgets/Icons.js): an arrow
-/// up (on top), two desks, the front one filled (on every workspace).
+/// The badges, six by six art pixels, as the shell's menu draws them (widgets/Icons.js arrowUp,
+/// allDesks): an arrow up (on top), two desks, the front one filled (on every workspace).
 const BADGES: [[&str; 6]; 2] = [
     ["..##..", ".####.", "######", "..##..", "..##..", "..##.."],
     ["..####", "..#..#", "####.#", "######", "####..", "####.."],
@@ -364,6 +376,8 @@ fn draw(
         let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         let bg = if look.active {
             accent
+        } else if look.light {
+            mix([0.88; 3], accent, 0.18)
         } else {
             mix([lum * 0.5; 3], accent, 0.2)
         };
