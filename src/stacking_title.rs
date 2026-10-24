@@ -83,7 +83,7 @@ pub enum FramePart {
 /// What a tile's frame has besides the title bar and the buttons.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Extras {
-    /// Its edges resize it (not while shaded).
+    /// Its edges resize it (not while shaded: then the bar gets a bottom edge of its own).
     pub edges: bool,
     pub on_top: bool,
     pub sticky: bool,
@@ -185,6 +185,7 @@ struct Look {
     hover: bool,
     on_top: bool,
     sticky: bool,
+    shaded: bool,
 }
 
 /// One window's title bar, drawn once per look.
@@ -242,6 +243,7 @@ impl TitleBar {
             hover,
             on_top: extras.on_top,
             sticky: extras.sticky,
+            shaded: !extras.edges,
         };
         if self.look.as_ref() != Some(&look) {
             self.buffer = draw(renderer, &look, scale, color, icon_path.filter(|_| icon))
@@ -396,6 +398,16 @@ fn draw(
     if let Some(line) = line {
         // a one art pixel line under the bar
         rect(&cr, line, 0., f64::from(height) - ap, f64::from(width), ap);
+    } else if look.shaded {
+        // rolled up: the bar's own bottom edge, so it does not read as part of the window behind
+        rect(
+            &cr,
+            mix(bg, BLACK, 0.5),
+            0.,
+            f64::from(height) - ap,
+            f64::from(width),
+            ap,
+        );
     }
 
     // the top corners cut in steps like a pixel window's (Settings → Windows → Corners)
