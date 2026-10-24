@@ -175,6 +175,10 @@ pub enum Action {
     #[knuffel(skip)]
     SetWindowBehindScene(u64, bool),
     #[knuffel(skip)]
+    SetWindowFlags(Option<u64>, Option<bool>, Option<bool>, Option<bool>),
+    #[knuffel(skip)]
+    RequestWindowMenu(Option<u64>),
+    #[knuffel(skip)]
     SetCastOnlyLayer(String, bool),
     #[knuffel(skip)]
     SetPixelCorners(f64, u32),
@@ -550,6 +554,13 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }
+            niri_ipc::Action::SetWindowFlags {
+                id,
+                shaded,
+                on_top,
+                sticky,
+            } => Self::SetWindowFlags(id, shaded, on_top, sticky),
+            niri_ipc::Action::RequestWindowMenu { id } => Self::RequestWindowMenu(id),
             niri_ipc::Action::MinimizeWindow { id, now: true } => Self::MinimizeWindowNow(id),
             niri_ipc::Action::MinimizeWindow { id: None, .. } => Self::MinimizeWindow,
             niri_ipc::Action::MinimizeWindow { id: Some(id), .. } => Self::MinimizeWindowById(id),

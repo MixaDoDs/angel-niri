@@ -620,6 +620,42 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         behind: bool,
     },
+    /// Change a floating window's desktop flags while stacking (angel-niri).
+    ///
+    /// Shaded: only its title bar shows (windows with niri's title bar only). On top: above
+    /// every other window, fullscreen ones too. Sticky: on every workspace of its monitor. A
+    /// flag not given stays as it is; leaving stacking clears them all.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Shade a window, keep it on top or on every workspace")
+    )]
+    SetWindowFlags {
+        /// Id of the window; the focused one if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        id: Option<u64>,
+        /// Rolled up into its title bar.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        shaded: Option<bool>,
+        /// Above every other window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        on_top: Option<bool>,
+        /// On every workspace of its monitor.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        sticky: Option<bool>,
+    },
+    /// Ask the shell for a window's menu at its title bar, as a right click there does
+    /// (angel-niri, while stacking: [`Event::WindowMenuRequested`]).
+    #[cfg_attr(feature = "clap", clap(about = "Ask the shell for a window's menu"))]
+    RequestWindowMenu {
+        /// Id of the window; the focused one if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        id: Option<u64>,
+    },
     /// Show a layer-shell namespace only to screencasts (angel-niri).
     ///
     /// Its surfaces are drawn into screencasts (OBS through the portal) but not on the monitor,
@@ -1735,6 +1771,19 @@ pub struct Window {
     /// A minimized window is out of the layout: it has no workspace. Focusing it brings it back.
     #[serde(default)]
     pub is_minimized: bool,
+    /// Whether this window is rolled up into its title bar (angel-niri, stacking).
+    #[serde(default)]
+    pub is_shaded: bool,
+    /// Whether this window stays above the others (angel-niri, stacking).
+    #[serde(default)]
+    pub is_on_top: bool,
+    /// Whether this window is on every workspace of its monitor (angel-niri, stacking).
+    #[serde(default)]
+    pub is_sticky: bool,
+    /// Whether niri draws this window's title bar (angel-niri, stacking): only such a window
+    /// can be shaded.
+    #[serde(default)]
+    pub has_title_bar: bool,
     /// Position- and size-related properties of the window.
     pub layout: WindowLayout,
     /// Timestamp when the window was most recently focused.

@@ -915,6 +915,19 @@ impl<W: LayoutElement> Tile<W> {
             && self.window.has_ssd()
     }
 
+    /// angel-niri (desk_flags.rs): rolled up into its title bar — only a titled tile can.
+    pub fn is_shaded(&self) -> bool {
+        self.window.is_shaded() && self.is_titled()
+    }
+
+    fn title_extras(&self) -> stacking_title::Extras {
+        stacking_title::Extras {
+            edges: !self.is_shaded(),
+            on_top: self.window.is_on_top(),
+            sticky: self.window.is_sticky(),
+        }
+    }
+
     pub fn title_height(&self) -> f64 {
         if self.is_titled() {
             TITLE_HEIGHT
@@ -929,7 +942,11 @@ impl<W: LayoutElement> Tile<W> {
         if !self.is_titled() {
             return None;
         }
-        stacking_title::frame_part(point - self.bob_offset(), self.tile_size())
+        stacking_title::frame_part(
+            point - self.bob_offset(),
+            self.tile_size(),
+            self.title_extras(),
+        )
     }
 
     /// The window's corners, the top ones square under a title bar.
@@ -1017,6 +1034,10 @@ impl<W: LayoutElement> Tile<W> {
             size.h += width * 2.;
         }
         size.h += self.title_height();
+        // angel-niri (desk_flags.rs): shaded, only the title bar
+        if self.is_shaded() {
+            size.h -= self.window_size().h;
+        }
 
         size
     }
@@ -1037,6 +1058,10 @@ impl<W: LayoutElement> Tile<W> {
             size.h += width * 2.;
         }
         size.h += self.title_height();
+        // angel-niri (desk_flags.rs): shaded, only the title bar
+        if self.is_shaded() {
+            size.h -= self.window_size().h;
+        }
 
         size
     }
@@ -1113,6 +1138,9 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     fn is_in_input_region(&self, mut point: Point<f64, Logical>) -> bool {
+        if self.is_shaded() {
+            return false;
+        }
         point -= self.window_loc().to_f64();
         self.window.is_in_input_region(point)
     }
@@ -1323,15 +1351,20 @@ impl<W: LayoutElement> Tile<W> {
             .window_clip_radius()
             .scaled_by(1. - expanded_progress as f32);
 
+        // angel-niri (desk_flags.rs): a shaded tile draws its title bar and frame, not the window
+        let shaded = self.is_shaded();
+
         // Popups go on top, whether it's resize or not.
-        self.window.render_popups(
-            ctx.r(),
-            window_render_loc,
-            scale,
-            win_alpha,
-            xray_pos,
-            &mut |elem| push(elem.into()),
-        );
+        if !shaded {
+            self.window.render_popups(
+                ctx.r(),
+                window_render_loc,
+                scale,
+                win_alpha,
+                xray_pos,
+                &mut |elem| push(elem.into()),
+            );
+        }
 
         // angel-niri (stacking_title.rs): the title bar, under the popups.
         if self.is_titled() {
@@ -1347,6 +1380,7 @@ impl<W: LayoutElement> Tile<W> {
                 self.scale,
                 self.title_active,
                 self.window.title_hover(),
+                self.title_extras(),
                 color,
             );
             if let Some(buffer) = buffer {
@@ -1363,13 +1397,13 @@ impl<W: LayoutElement> Tile<W> {
         }
 
         // angel-niri (inactive_dim.rs): the dots over the window, under its popups
-        if self.dim_drawn.is_some() {
+        if self.dim_drawn.is_some() && !shaded {
             push(self.dim.clone().with_location(window_render_loc).into());
         }
 
         // If we're resizing, try to render a shader, or a fallback.
-        let mut pushed_resize = false;
-        if let Some(resize) = &self.resize_animation {
+        let mut pushed_resize = shaded;
+        if let Some(resize) = self.resize_animation.as_ref().filter(|_| !shaded) {
             if ResizeRenderElement::has_shader(ctx.renderer) {
                 let mut ctx = ctx.as_gles();
 

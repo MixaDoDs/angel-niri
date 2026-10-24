@@ -13,6 +13,9 @@
 //!
 //! Around such a window the pointer also grabs its edges to resize it, `GRAB` px outside.
 //!
+//! A window kept on top or on every workspace (desk_flags.rs) shows a small pixel badge for it on
+//! the right — a pin, two desks — and a click on the badge clears that flag.
+//!
 //! The Mac look (`--title-style mac`, Golden Gate) has the same buttons in Mac colours on a light
 //! grey bar, the title without an icon.
 
@@ -71,7 +74,39 @@ pub enum FramePart {
     Minimize,
     Maximize,
     Close,
+    /// The badges of a window on top and on every workspace.
+    OnTop,
+    Sticky,
     Edge(ResizeEdge),
+}
+
+/// What a tile's frame has besides the title bar and the buttons.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Extras {
+    /// Its edges resize it (not while shaded).
+    pub edges: bool,
+    pub on_top: bool,
+    pub sticky: bool,
+}
+
+/// The badges of a bar of `width`, right to left: six art pixels square, two apart, four from the
+/// right; only the flags that are on.
+fn badges(width: f64, extras: Extras) -> Vec<(FramePart, Rectangle<f64, Logical>)> {
+    let right = (width / ART).floor() * ART;
+    let flags = [
+        (FramePart::OnTop, extras.on_top),
+        (FramePart::Sticky, extras.sticky),
+    ];
+    flags
+        .into_iter()
+        .filter(|(_, on)| *on)
+        .enumerate()
+        .map(|(i, (part, _))| {
+            let x = right - (10. + 8. * i as f64) * ART;
+            let rect = Rectangle::new(Point::from((x, 3. * ART)), Size::from((6. * ART, 6. * ART)));
+            (part, rect)
+        })
+        .collect()
 }
 
 /// The buttons, left to right: close, minimize, maximize, six art pixels round, two apart, four
@@ -93,7 +128,11 @@ fn buttons() -> [(FramePart, Rectangle<f64, Logical>); 3] {
 /// Which part of the frame of a titled tile of `size` is at `pos` (relative to the tile, the
 /// title bar on top): its title bar and buttons, or an edge up to `GRAB` px outside. `None` over
 /// the window itself and beyond.
-pub fn frame_part(pos: Point<f64, Logical>, size: Size<f64, Logical>) -> Option<FramePart> {
+pub fn frame_part(
+    pos: Point<f64, Logical>,
+    size: Size<f64, Logical>,
+    extras: Extras,
+) -> Option<FramePart> {
     let (x, y, w, h) = (pos.x, pos.y, size.w, size.h);
     if x < -GRAB || y < -GRAB || x >= w + GRAB || y >= h + GRAB {
         return None;
@@ -102,6 +141,9 @@ pub fn frame_part(pos: Point<f64, Logical>, size: Size<f64, Logical>) -> Option<
     let out_x = x < 0. || x >= w;
     let out_y = y < 0. || y >= h;
     if out_x || out_y {
+        if !extras.edges {
+            return None;
+        }
         let mut edges = ResizeEdge::empty();
         if x < 0. || (out_y && x < CORNER) {
             edges |= ResizeEdge::LEFT;
@@ -121,6 +163,7 @@ pub fn frame_part(pos: Point<f64, Logical>, size: Size<f64, Logical>) -> Option<
     }
     let part = buttons()
         .into_iter()
+        .chain(badges(w, extras))
         .find(|(_, rect)| rect.contains(pos))
         .map_or(FramePart::Title, |(part, _)| part);
     Some(part)
@@ -140,6 +183,8 @@ struct Look {
     icon: bool,
     mac: bool,
     hover: bool,
+    on_top: bool,
+    sticky: bool,
 }
 
 /// One window's title bar, drawn once per look.
@@ -164,6 +209,7 @@ impl TitleBar {
         scale: f64,
         active: bool,
         hover: bool,
+        extras: Extras,
         color: Color,
     ) -> Option<TextureBuffer<GlesTexture>> {
         let icon_path = icon_path(app_id);
@@ -194,6 +240,8 @@ impl TitleBar {
             icon,
             mac: mac(),
             hover,
+            on_top: extras.on_top,
+            sticky: extras.sticky,
         };
         if self.look.as_ref() != Some(&look) {
             self.buffer = draw(renderer, &look, scale, color, icon_path.filter(|_| icon))
@@ -229,6 +277,12 @@ const GLYPHS: [[&str; 4]; 3] = [
     ["#..#", ".##.", ".##.", "#..#"],
     ["....", "....", "####", "...."],
     ["##..", "#...", "...#", "..##"],
+];
+
+/// The badges, six by six art pixels: a pin (on top), two desks (on every workspace).
+const BADGES: [[&str; 6]; 2] = [
+    ["..##..", ".####.", ".####.", "######", "..##..", "..#..."],
+    ["####..", "#..#..", "#.####", "###..#", "..#..#", "..####"],
 ];
 
 /// Red, yellow and green of the pixel skins, a little tinted by the bar (hellish in hell).
@@ -323,6 +377,22 @@ fn draw(
         if look.hover {
             sprite(&cr, mix(*light, BLACK, 0.6), x + ap, y + ap, &glyph);
         }
+    }
+
+    let extras = Extras {
+        edges: true,
+        on_top: look.on_top,
+        sticky: look.sticky,
+    };
+    for (part, badge) in badges(f64::from(width) / scale, extras) {
+        let rows = if part == FramePart::OnTop {
+            &BADGES[0]
+        } else {
+            &BADGES[1]
+        };
+        let x = (badge.loc.x / ART).round() * ap;
+        let y = (badge.loc.y / ART).round() * ap;
+        sprite(&cr, text, x, y, rows);
     }
 
     // the icon and the title in the middle, clear of the buttons on both sides
@@ -443,7 +513,11 @@ mod tests {
     #[test]
     fn frame_parts() {
         let size = Size::from((400., 300.));
-        let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size);
+        let extras = Extras {
+            edges: true,
+            ..Extras::default()
+        };
+        let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size, extras);
         assert_eq!(at(100., 10.), Some(FramePart::Title));
         assert_eq!(at(100., 100.), None, "the window itself");
         // close, minimize, maximize from the left: 4 art px in, 6 wide, 2 apart
@@ -455,5 +529,20 @@ mod tests {
         assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
         assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
         assert_eq!(at(-10., 150.), None, "beyond the grab");
+    }
+
+    #[test]
+    fn badges_and_shaded_edges() {
+        let size = Size::from((400., 24.));
+        let extras = Extras {
+            edges: false,
+            on_top: true,
+            sticky: true,
+        };
+        let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size, extras);
+        // the pin 4 art px from the right, 6 wide; the desks 2 art px to its left
+        assert_eq!(at(400. - 10., 10.), Some(FramePart::OnTop));
+        assert_eq!(at(400. - 26., 10.), Some(FramePart::Sticky));
+        assert_eq!(at(-3., 10.), None, "a shaded window does not resize");
     }
 }

@@ -12,6 +12,7 @@ pub mod clipboard_keep;
 pub mod cursor;
 #[cfg(feature = "dbus")]
 pub mod dbus;
+pub mod desk_flags;
 pub mod frame_clock;
 pub mod game;
 pub mod handlers;

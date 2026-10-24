@@ -371,7 +371,9 @@ impl State {
                 if last.is_some_and(|last| now.saturating_sub(last) <= DOUBLE_CLICK_TIME) {
                     mapped.last_title_click().set(None);
                     self.niri.layout.activate_window(&window);
-                    self.niri.layout.toggle_maximized(&window);
+                    if !self.unshade(&window) {
+                        self.niri.layout.toggle_maximized(&window);
+                    }
                 } else if let Some(grab) = MoveGrab::new(
                     self,
                     start_data(),
@@ -411,6 +413,34 @@ impl State {
         }
 
         self.niri.queue_redraw_all();
+        true
+    }
+
+    /// The wheel over a titled window's title bar: up shades it, down unrolls it. Returns
+    /// whether the wheel was taken.
+    pub fn stacking_frame_wheel(&mut self, vertical: f64) -> bool {
+        if !on() || vertical == 0. {
+            return false;
+        }
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        if pointer.is_grabbed() || self.niri.layout.is_overview_open() {
+            return false;
+        }
+        let Some((output, pos)) = self.niri.output_under(pointer.current_location()) else {
+            return false;
+        };
+        let output = output.clone();
+        let Some((window, part)) = self.niri.layout.frame_part_under(&output, pos) else {
+            return false;
+        };
+        if matches!(part, FramePart::Edge(_)) {
+            return false;
+        }
+        let id = (self.niri.layout.windows())
+            .find(|(_, m)| m.window == window)
+            .map(|(_, m)| m.id().get());
+        // a negative amount is the wheel turned up
+        self.set_window_flags(id, Some(vertical < 0.), None, None);
         true
     }
 
@@ -505,7 +535,19 @@ impl State {
             FramePart::Minimize => self.request_minimize(&window),
             FramePart::Maximize => {
                 self.niri.layout.activate_window(&window);
-                self.niri.layout.toggle_maximized(&window);
+                if !self.unshade(&window) {
+                    self.niri.layout.toggle_maximized(&window);
+                }
+            }
+            FramePart::OnTop | FramePart::Sticky => {
+                let id = (self.niri.layout.windows())
+                    .find(|(_, m)| m.window == window)
+                    .map(|(_, m)| m.id().get());
+                if part == FramePart::OnTop {
+                    self.set_window_flags(id, None, Some(false), None);
+                } else {
+                    self.set_window_flags(id, None, None, Some(false));
+                }
             }
             FramePart::Close => {
                 if let Some((_, mapped)) =

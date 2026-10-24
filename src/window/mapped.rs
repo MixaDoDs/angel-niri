@@ -153,6 +153,12 @@ pub struct Mapped {
     title_button_down: Cell<Option<FramePart>>,
     title_hover: Cell<bool>,
 
+    /// angel-niri (desk_flags.rs): rolled up into its title bar, above the other windows, on
+    /// every workspace of its monitor.
+    shaded: bool,
+    on_top: bool,
+    sticky: bool,
+
     /// Whether this window is in windowed (fake) fullscreen.
     ///
     /// In this mode, the underlying window is told that it's fullscreen, while keeping it as
@@ -326,6 +332,9 @@ impl Mapped {
             last_title_click: Cell::new(None),
             title_button_down: Cell::new(None),
             title_hover: Cell::new(false),
+            shaded: false,
+            on_top: false,
+            sticky: false,
             is_windowed_fullscreen: false,
             is_pending_windowed_fullscreen: false,
             uncommitted_windowed_fullscreen: Vec::new(),
@@ -531,6 +540,30 @@ impl Mapped {
 
     pub fn title_button_down(&self) -> &Cell<Option<FramePart>> {
         &self.title_button_down
+    }
+
+    pub fn shaded(&self) -> bool {
+        self.shaded
+    }
+
+    pub fn on_top(&self) -> bool {
+        self.on_top
+    }
+
+    pub fn sticky(&self) -> bool {
+        self.sticky
+    }
+
+    pub fn set_shaded(&mut self, on: bool) {
+        self.shaded = on;
+    }
+
+    pub fn set_on_top(&mut self, on: bool) {
+        self.on_top = on;
+    }
+
+    pub fn set_sticky(&mut self, on: bool) {
+        self.sticky = on;
     }
 
     pub fn set_title_hover(&self, hover: bool) -> bool {
@@ -1016,6 +1049,18 @@ impl LayoutElement for Mapped {
 
     fn title_hover(&self) -> bool {
         self.title_hover.get()
+    }
+
+    fn is_shaded(&self) -> bool {
+        self.shaded
+    }
+
+    fn is_on_top(&self) -> bool {
+        self.on_top
+    }
+
+    fn is_sticky(&self) -> bool {
+        self.sticky
     }
 
     fn has_ssd(&self) -> bool {

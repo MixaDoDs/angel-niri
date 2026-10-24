@@ -884,6 +884,11 @@ impl State {
         // states and then send a pending configure.
         self.niri.refresh_window_states();
 
+        // angel-niri (desk_flags.rs): windows on every workspace follow the active one
+        if self.niri.layout.refresh_sticky() {
+            self.niri.queue_redraw_all();
+        }
+
         // Needs to be called after updating the keyboard focus.
         self.niri.refresh_layout();
 

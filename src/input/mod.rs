@@ -962,6 +962,12 @@ impl State {
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }
+            Action::SetWindowFlags(id, shaded, on_top, sticky) => {
+                self.set_window_flags(id, shaded, on_top, sticky);
+            }
+            Action::RequestWindowMenu(id) => {
+                self.request_window_menu(id);
+            }
             Action::SetCastPause(on, image, background) => {
                 if let Err(err) =
                     crate::cast_pause::set(on, image.as_deref(), background.as_deref())
@@ -997,6 +1003,9 @@ impl State {
                 }
                 if let Some(style) = title_style {
                     crate::stacking_title::set_mac(style == "mac");
+                }
+                if !on {
+                    self.clear_window_flags();
                 }
                 self.niri.layout.set_stacking(on);
                 self.stacking_decorations();
@@ -3400,6 +3409,15 @@ impl State {
             .overview;
 
         let is_mru_open = self.niri.window_mru_ui.is_open();
+
+        // angel-niri (desk_flags.rs): the plain wheel over a title bar shades the window
+        if source == AxisSource::Wheel && !should_handle_in_overview && !is_mru_open {
+            let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
+            let plain = !(mods.ctrl || mods.alt || mods.shift || mods.logo);
+            if plain && self.stacking_frame_wheel(vertical_amount) {
+                return;
+            }
+        }
 
         // Handle wheel scroll bindings.
         if source == AxisSource::Wheel {

@@ -1663,7 +1663,9 @@ impl<W: LayoutElement> Workspace<W> {
 
         let floating = self.floating.tiles_with_render_positions();
         let visible = self.is_floating_visible();
-        let floating = floating.map(move |(tile, pos)| (tile, pos, visible));
+        // angel-niri (desk_flags.rs): a window on top shows over a fullscreen one too
+        let floating =
+            floating.map(move |(tile, pos)| (tile, pos, visible || tile.window().is_on_top()));
 
         floating.chain(scrolling)
     }
@@ -1726,7 +1728,10 @@ impl<W: LayoutElement> Workspace<W> {
         layer: RenderLayer,
         push: &mut dyn FnMut(WorkspaceRenderElement<R>),
     ) {
-        if !self.is_floating_visible() && layer != RenderLayer::MovingBetweenWorkspaces {
+        // angel-niri (desk_flags.rs): over a fullscreen window, only the ones kept on top
+        let only_on_top =
+            !self.is_floating_visible() && layer != RenderLayer::MovingBetweenWorkspaces;
+        if only_on_top && !self.floating.has_on_top() {
             return;
         }
 
@@ -1738,6 +1743,7 @@ impl<W: LayoutElement> Workspace<W> {
             view_rect,
             floating_focus_ring,
             layer,
+            only_on_top,
             &mut |elem| push(elem.into()),
         );
     }
@@ -1840,14 +1846,14 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
         // This logic is consistent with tiles_with_render_positions().
-        if self.is_floating_visible() {
-            if let Some(rv) = self
-                .floating
-                .tiles_with_render_positions()
-                .find_map(|(tile, tile_pos)| HitType::hit_tile(tile, tile_pos, pos))
-            {
-                return Some(rv);
-            }
+        let visible = self.is_floating_visible();
+        if let Some(rv) = self
+            .floating
+            .tiles_with_render_positions()
+            .filter(|(tile, _)| visible || tile.window().is_on_top())
+            .find_map(|(tile, tile_pos)| HitType::hit_tile(tile, tile_pos, pos))
+        {
+            return Some(rv);
         }
 
         self.scrolling.window_under(pos)
@@ -2277,10 +2283,11 @@ impl<W: LayoutElement> Workspace<W> {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(W::Id, crate::stacking_title::FramePart)> {
-        if !self.is_floating_visible() {
-            return None;
-        }
+        let visible = self.is_floating_visible();
         for (tile, tile_pos) in self.floating.tiles_with_render_positions() {
+            if !visible && !tile.window().is_on_top() {
+                continue;
+            }
             let pos_within_tile = pos - tile_pos;
             if let Some(part) = tile.frame_part(pos_within_tile) {
                 return Some((tile.window().id().clone(), part));
@@ -2290,6 +2297,13 @@ impl<W: LayoutElement> Workspace<W> {
             }
         }
         None
+    }
+
+    /// angel-niri (desk_flags.rs): the windows kept on top above the others again, and the sizes
+    /// of shaded ones.
+    pub fn restack_floating(&mut self) {
+        self.floating.keep_on_top();
+        self.floating.refresh_sizes();
     }
 
     /// angel-niri (stacking.rs): snaps a floating window to a part of the working area, or back.

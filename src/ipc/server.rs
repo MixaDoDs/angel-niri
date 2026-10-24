@@ -34,6 +34,7 @@ use crate::backend::IpcOutputMap;
 use crate::handlers::image_copy_capture;
 use crate::input::pick_window_grab::PickWindowGrab;
 use crate::layout::workspace::WorkspaceId;
+use crate::layout::LayoutElement as _;
 use crate::niri::State;
 use crate::utils::{version, with_toplevel_role};
 use crate::window::Mapped;
@@ -538,6 +539,10 @@ fn make_ipc_window(
         is_floating: mapped.is_floating(),
         is_urgent: mapped.is_urgent(),
         is_minimized: mapped.is_minimized(),
+        is_shaded: mapped.shaded(),
+        is_on_top: mapped.on_top(),
+        is_sticky: mapped.sticky(),
+        has_title_bar: crate::stacking::on() && mapped.is_floating() && mapped.has_ssd(),
         layout,
         focus_timestamp: mapped.get_focus_timestamp().map(Timestamp::from),
     })

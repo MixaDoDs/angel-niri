@@ -522,6 +522,26 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.insert(idx, tile);
 
         self.bring_up_descendants_of(idx);
+        self.keep_on_top();
+    }
+
+    /// angel-niri (desk_flags.rs): the windows kept on top above the others, each group in its
+    /// own order.
+    pub fn keep_on_top(&mut self) {
+        if !self.tiles.iter().any(|t| t.window().is_on_top()) {
+            return;
+        }
+        let mut pairs: Vec<_> = self.tiles.drain(..).zip(self.data.drain(..)).collect();
+        pairs.sort_by_key(|(tile, _)| !tile.window().is_on_top());
+        for (tile, data) in pairs {
+            self.tiles.push(tile);
+            self.data.push(data);
+        }
+    }
+
+    /// angel-niri (desk_flags.rs): whether any window here is kept on top.
+    pub fn has_on_top(&self) -> bool {
+        self.tiles.iter().any(|t| t.window().is_on_top())
     }
 
     /// angel-niri (stacking_title.rs): the tiles' sizes again, after title bars came or went.
@@ -727,6 +747,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let data = self.data.remove(from_idx);
         self.tiles.insert(to_idx, tile);
         self.data.insert(to_idx, data);
+        self.keep_on_top();
     }
 
     pub fn start_close_animation_for_tile(
@@ -1201,6 +1222,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         view_rect: Rectangle<f64, Logical>,
         focus_ring: bool,
         layer: RenderLayer,
+        only_on_top: bool,
         push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
     ) {
         let scale = Scale::from(self.scale);
@@ -1225,7 +1247,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             } else {
                 RenderLayer::Normal
             };
-            if tile_layer != layer {
+            if tile_layer != layer || (only_on_top && !tile.window().is_on_top()) {
                 continue;
             }
 

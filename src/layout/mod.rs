@@ -239,6 +239,16 @@ pub trait LayoutElement {
     fn title_hover(&self) -> bool {
         false
     }
+    /// angel-niri (desk_flags.rs): rolled up, above the others, on every workspace.
+    fn is_shaded(&self) -> bool {
+        false
+    }
+    fn is_on_top(&self) -> bool {
+        false
+    }
+    fn is_sticky(&self) -> bool {
+        false
+    }
     fn set_preferred_scale_transform(&self, scale: output::Scale, transform: Transform);
     fn output_enter(&self, output: &Output);
     fn output_leave(&self, output: &Output);
@@ -5309,6 +5319,36 @@ impl<W: LayoutElement> Layout<W> {
     /// angel-niri (stacking.rs): turns the stacking mode on or off. On, every workspace floats
     /// its columns and new windows open floating; off, the columns come back as they were and
     /// the windows floated meanwhile join them. Minimized windows come back the same way.
+    /// angel-niri (desk_flags.rs): windows on every workspace follow their monitor's active
+    /// workspace. Returns whether one moved.
+    pub fn refresh_sticky(&mut self) -> bool {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return false;
+        };
+        let mut moved = false;
+        for mon in monitors {
+            let active = mon.active_workspace_idx();
+            let ids: Vec<_> = (mon.workspaces.iter().enumerate())
+                .filter(|(idx, _)| *idx != active)
+                .flat_map(|(_, ws)| ws.tiles())
+                .filter(|tile| tile.window().is_sticky())
+                .map(|tile| tile.window().id().clone())
+                .collect();
+            for id in ids {
+                mon.move_to_workspace(Some(&id), active, ActivateWindow::No);
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// angel-niri (desk_flags.rs): after windows were shaded or put on top.
+    pub fn restack_floating(&mut self) {
+        for ws in self.workspaces_mut() {
+            ws.restack_floating();
+        }
+    }
+
     pub fn set_stacking(&mut self, on: bool) {
         if crate::stacking::on() == on {
             return;
