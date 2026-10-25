@@ -1018,7 +1018,8 @@ impl State {
                 if !on {
                     self.clear_window_flags();
                 }
-                self.niri.layout.set_stacking(on);
+                let remember = &self.niri.remember;
+                self.niri.layout.set_stacking(on, |m| remember.is_pinned(m));
                 self.stacking_decorations();
                 self.niri.queue_redraw_all();
             }

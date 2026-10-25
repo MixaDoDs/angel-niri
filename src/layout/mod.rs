@@ -396,6 +396,9 @@ pub struct Layout<W: LayoutElement> {
     /// angel-niri (stacking.rs): the windows the stacking mode floated, to tile again when it
     /// ends.
     stacked: Vec<W::Id>,
+    /// angel-niri (stacking.rs): windows the stacking mode minimized off the workspaces after
+    /// the first, each with its workspace's index, to come back when it ends.
+    desk_folded: Vec<(W::Id, usize)>,
     /// angel-niri (stacking.rs): a window just shaken while dragged, and the others on its
     /// workspace.
     shaken: Option<(W::Id, Vec<W::Id>)>,
@@ -789,6 +792,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            desk_folded: Vec::new(),
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -818,6 +822,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            desk_folded: Vec::new(),
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -5436,9 +5441,16 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    pub fn set_stacking(&mut self, on: bool) {
+    /// On, the windows of every workspace after a monitor's first are minimized and each
+    /// monitor shows its first workspace, as a usual desktop starts on one; `keep` names the ones
+    /// to leave where they are (pinned to a place). Full-screen windows, windows on every
+    /// workspace and named workspaces stay too. Off, they come back to their workspaces.
+    pub fn set_stacking(&mut self, on: bool, keep: impl Fn(&W) -> bool) {
         if crate::stacking::on() == on {
             return;
+        }
+        if on {
+            self.fold_desks(keep);
         }
         crate::stacking::set_flag(on);
         // Windows that floated already get or lose their title bars.
@@ -5469,6 +5481,72 @@ impl<W: LayoutElement> Layout<W> {
                     min.removed.is_floating = false;
                 }
             }
+            self.unfold_desks();
+        }
+    }
+
+    fn fold_desks(&mut self, keep: impl Fn(&W) -> bool) {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        let mut fold = Vec::new();
+        for mon in monitors.iter_mut() {
+            for (idx, ws) in mon.workspaces.iter().enumerate().skip(1) {
+                if ws.name().is_some() {
+                    continue;
+                }
+                for tile in ws.tiles() {
+                    let win = tile.window();
+                    let own = self.fullscreen_from.iter().any(|(id, _)| id == win.id());
+                    if own
+                        || win.is_sticky()
+                        || win.pending_sizing_mode().is_fullscreen()
+                        || keep(win)
+                    {
+                        continue;
+                    }
+                    fold.push((win.id().clone(), idx));
+                }
+            }
+            if mon.active_workspace_idx() != 0 {
+                mon.switch_workspace(0);
+            }
+        }
+        for (id, idx) in fold {
+            if self.minimize_window(&id) {
+                self.desk_folded.push((id, idx));
+            }
+        }
+    }
+
+    fn unfold_desks(&mut self) {
+        // a workspace emptied by the folding is gone: a new one at its index, once for all its
+        // windows
+        let mut made: Vec<(WorkspaceId, WorkspaceId)> = Vec::new();
+        // the last folded first: each kept its column index among the ones left after it
+        for (id, idx) in std::mem::take(&mut self.desk_folded).into_iter().rev() {
+            let Some(min) = self.minimized_idx(&id).map(|i| &self.minimized[i]) else {
+                continue;
+            };
+            let (ws_id, output) = (min.workspace_id, min.output_name.clone());
+            let mut to = made
+                .iter()
+                .find(|(old, _)| *old == ws_id)
+                .map(|(_, new)| *new);
+            if to.is_none() && self.find_workspace_by_id(ws_id).is_none() {
+                if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+                    if let Some(mon) =
+                        (monitors.iter_mut()).find(|mon| Some(mon.output_name()) == output.as_ref())
+                    {
+                        let idx = idx.min(mon.workspaces.len() - 1);
+                        mon.add_workspace_at(idx);
+                        let new = mon.workspaces[idx].id();
+                        made.push((ws_id, new));
+                        to = Some(new);
+                    }
+                }
+            }
+            self.unminimize_window(&id, false, to);
         }
     }
 

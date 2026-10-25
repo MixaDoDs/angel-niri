@@ -3,7 +3,9 @@
 //! `set-stacking-mode` floats every column on every workspace, each window where it is on
 //! screen, and new windows open floating too; turned off, the columns come back as they were
 //! (their order, width and workspace) and the windows opened meanwhile join them at the end.
-//! Windows that floated before stay floating. The layout does the moving
+//! Windows that floated before stay floating. Turned on, it gathers each monitor on its first
+//! workspace: the windows of the others are minimized (not the full-screen, the pinned and those
+//! on every workspace) and come back to their workspaces when it ends. The layout does the moving
 //! (`Layout::set_stacking`); this keeps the switch, read wherever floating behaves differently
 //! while it is on: new windows step down from one another, focus follows clicks, not the mouse,
 //! and a window let go of mid-drag is not thrown.

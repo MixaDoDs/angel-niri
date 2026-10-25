@@ -83,6 +83,13 @@ impl Remember {
     }
 }
 
+impl Remember {
+    /// Whether the window's program has a pinned place (Desktop leaves it where it is).
+    pub fn is_pinned(&self, mapped: &Mapped) -> bool {
+        self.on && app_id(mapped.toplevel()).is_some_and(|id| self.pins.contains_key(&id))
+    }
+}
+
 fn app_id(toplevel: &ToplevelSurface) -> Option<String> {
     with_toplevel_role(toplevel, |role| role.app_id.clone()).filter(|id| !id.is_empty())
 }

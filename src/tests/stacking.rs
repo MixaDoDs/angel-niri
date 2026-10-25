@@ -3,7 +3,7 @@ use smithay::utils::Point;
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use super::*;
-use crate::layout::LayoutElement as _;
+use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::tests::client::ClientId;
 
 fn open(f: &mut Fixture, id: ClientId, w: u16, h: u16) -> Window {
@@ -48,7 +48,7 @@ fn floating(f: &mut Fixture) -> Vec<Window> {
 }
 
 fn set_stacking(f: &mut Fixture, id: ClientId, on: bool) {
-    f.niri().layout.set_stacking(on);
+    f.niri().layout.set_stacking(on, |_| false);
     f.double_roundtrip(id);
 }
 
@@ -317,4 +317,50 @@ fn stacking_fullscreen_gets_its_own_workspace() {
     let (idx, active, _) = ws_of(&mut f, &b);
     assert_eq!((idx, active), (Some(0), 0), "not back where it was");
     assert_eq!(floating(&mut f).len(), 2, "not floating again");
+}
+
+// on, the windows of the second workspace are minimized and the monitor shows its first; off,
+// they are back in their columns on the second workspace
+#[test]
+fn stacking_gathers_on_the_first_workspace() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 100, 100);
+    let b = open(&mut f, id, 100, 100);
+    let c = open(&mut f, id, 100, 100);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&b), 1, ActivateWindow::No);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&c), 1, ActivateWindow::No);
+    f.niri().layout.switch_workspace(1);
+    f.double_roundtrip(id);
+
+    set_stacking(&mut f, id, true);
+    let layout = &f.niri().layout;
+    assert!(
+        layout.is_minimized(&b) && layout.is_minimized(&c),
+        "not minimized"
+    );
+    assert!(!layout.is_minimized(&a));
+    let mon = layout.monitors().next().unwrap();
+    assert_eq!(mon.active_workspace_idx(), 0, "not on the first workspace");
+
+    set_stacking(&mut f, id, false);
+    let layout = &f.niri().layout;
+    assert!(!layout.is_minimized(&b) && !layout.is_minimized(&c));
+    let on = |win: &Window| {
+        (layout.workspaces())
+            .find(|(_, _, ws)| ws.has_window(win))
+            .map(|(_, idx, _)| idx)
+    };
+    assert_eq!((on(&a), on(&b), on(&c)), (Some(0), Some(1), Some(1)));
+    f.niri().layout.switch_workspace(1);
+    assert_eq!(
+        columns(&mut f),
+        [vec![b], vec![c]],
+        "not back in its columns"
+    );
 }
