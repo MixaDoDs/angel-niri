@@ -827,8 +827,42 @@ impl<W: LayoutElement> Monitor<W> {
         self.move_to_workspace(None, new_idx, activate);
     }
 
+    /// angel-niri (stacking.rs): whether this is the empty workspace niri keeps at the end, which
+    /// Desktop doesn't show (not while it is the one in front: a desk just opened from Mission
+    /// Control's "+", gone again once left empty).
+    pub fn is_spare_workspace(&self, idx: usize) -> bool {
+        crate::stacking::on()
+            && idx > 0
+            && idx + 1 == self.workspaces.len()
+            && idx != self.active_workspace_idx
+            && !self.workspaces[idx].has_windows_or_name()
+    }
+
+    /// angel-niri (stacking.rs): the last workspace a switch or a move may reach.
+    pub fn last_reachable_workspace(&self) -> usize {
+        let last = self.workspaces.len() - 1;
+        if self.is_spare_workspace(last) {
+            last - 1
+        } else {
+            last
+        }
+    }
+
+    /// angel-niri (stacking.rs): Mission Control's "+": the view goes to the empty workspace at
+    /// the end, with the window if one is given (niri then keeps a new empty one after it).
+    pub fn open_spare_workspace(&mut self, window: Option<&W::Id>) {
+        let last = self.workspaces.len() - 1;
+        match window {
+            Some(window) => self.move_to_workspace(Some(window), last, ActivateWindow::Yes),
+            None => self.activate_workspace(last),
+        }
+    }
+
     pub fn move_to_workspace_down(&mut self, activate: ActivateWindow) {
-        let new_idx = min(self.active_workspace_idx + 1, self.workspaces.len() - 1);
+        let new_idx = min(
+            self.active_workspace_idx + 1,
+            self.last_reachable_workspace(),
+        );
         self.move_to_workspace(None, new_idx, activate);
     }
 
@@ -927,12 +961,16 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn move_column_to_workspace_down(&mut self, activate: bool) {
-        let new_idx = min(self.active_workspace_idx + 1, self.workspaces.len() - 1);
+        let new_idx = min(
+            self.active_workspace_idx + 1,
+            self.last_reachable_workspace(),
+        );
         self.move_column_to_workspace(new_idx, activate);
     }
 
     pub fn move_column_to_workspace(&mut self, idx: usize, activate: bool) {
         let source_workspace_idx = self.active_workspace_idx;
+        let idx = min(idx, self.last_reachable_workspace());
 
         let new_idx = min(idx, self.workspaces.len() - 1);
         if new_idx == source_workspace_idx {
@@ -1007,7 +1045,10 @@ impl<W: LayoutElement> Monitor<W> {
                 let new = current.floor() + 1.;
                 new.clamp(0., (self.workspaces.len() - 1) as f64) as usize
             }
-            _ => min(self.active_workspace_idx + 1, self.workspaces.len() - 1),
+            _ => min(
+                self.active_workspace_idx + 1,
+                self.last_reachable_workspace(),
+            ),
         };
 
         self.activate_workspace(new_idx);
@@ -1019,11 +1060,11 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn switch_workspace(&mut self, idx: usize) {
-        self.activate_workspace(min(idx, self.workspaces.len() - 1));
+        self.activate_workspace(min(idx, self.last_reachable_workspace()));
     }
 
     pub fn switch_workspace_auto_back_and_forth(&mut self, idx: usize) {
-        let idx = min(idx, self.workspaces.len() - 1);
+        let idx = min(idx, self.last_reachable_workspace());
 
         if idx == self.active_workspace_idx {
             if let Some(prev_idx) = self.previous_workspace_idx() {

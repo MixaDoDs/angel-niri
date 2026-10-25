@@ -2318,7 +2318,31 @@ impl<W: LayoutElement> Layout<W> {
             };
             monitor
         };
+        let idx = idx.min(monitor.last_reachable_workspace());
         monitor.move_to_workspace(window, idx, activate);
+    }
+
+    /// angel-niri (stacking.rs): Mission Control's "+" on an output (the active one without a
+    /// name): a new desk in front, with the window if given (it must be on that output).
+    pub fn open_spare_workspace(&mut self, output: Option<&str>, window: Option<&W::Id>) {
+        let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &mut self.monitor_set
+        else {
+            return;
+        };
+        let Some(idx) = (match output {
+            Some(name) => monitors.iter().position(|mon| mon.output_name() == name),
+            None => Some(*active_monitor_idx),
+        }) else {
+            return;
+        };
+        let mon = &mut monitors[idx];
+        let window = window.filter(|win| mon.has_window(win));
+        mon.open_spare_workspace(window);
+        *active_monitor_idx = idx;
     }
 
     pub fn move_column_to_workspace_up(&mut self, activate: bool) {
@@ -5520,32 +5544,45 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     fn unfold_desks(&mut self) {
-        // a workspace emptied by the folding is gone: a new one at its index, once for all its
-        // windows
-        let mut made: Vec<(WorkspaceId, WorkspaceId)> = Vec::new();
-        // the last folded first: each kept its column index among the ones left after it
-        for (id, idx) in std::mem::take(&mut self.desk_folded).into_iter().rev() {
-            let Some(min) = self.minimized_idx(&id).map(|i| &self.minimized[i]) else {
+        let folded = std::mem::take(&mut self.desk_folded);
+        // a workspace emptied by the folding is gone: made again at its index, in order, so the
+        // old desks come back on their numbers and the ones made in Desktop follow them
+        let mut gone: Vec<(usize, WorkspaceId, Option<String>)> = Vec::new();
+        for (id, idx) in &folded {
+            let Some(min) = self.minimized_idx(id).map(|i| &self.minimized[i]) else {
                 continue;
             };
-            let (ws_id, output) = (min.workspace_id, min.output_name.clone());
-            let mut to = made
+            let ws_id = min.workspace_id;
+            if self.find_workspace_by_id(ws_id).is_none() && !gone.iter().any(|g| g.1 == ws_id) {
+                gone.push((*idx, ws_id, min.output_name.clone()));
+            }
+        }
+        gone.sort_by_key(|g| g.0);
+        let mut made: Vec<(WorkspaceId, WorkspaceId)> = Vec::new();
+        if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+            for (idx, old, output) in gone {
+                let Some(mon) =
+                    (monitors.iter_mut()).find(|mon| Some(mon.output_name()) == output.as_ref())
+                else {
+                    continue;
+                };
+                let idx = idx.min(mon.workspaces.len() - 1);
+                mon.add_workspace_at(idx);
+                made.push((old, mon.workspaces[idx].id()));
+            }
+        }
+        // the last folded first: each kept its column index among the ones left after it
+        for (id, _) in folded.into_iter().rev() {
+            let Some(ws_id) = self
+                .minimized_idx(&id)
+                .map(|i| self.minimized[i].workspace_id)
+            else {
+                continue;
+            };
+            let to = made
                 .iter()
                 .find(|(old, _)| *old == ws_id)
                 .map(|(_, new)| *new);
-            if to.is_none() && self.find_workspace_by_id(ws_id).is_none() {
-                if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
-                    if let Some(mon) =
-                        (monitors.iter_mut()).find(|mon| Some(mon.output_name()) == output.as_ref())
-                    {
-                        let idx = idx.min(mon.workspaces.len() - 1);
-                        mon.add_workspace_at(idx);
-                        let new = mon.workspaces[idx].id();
-                        made.push((ws_id, new));
-                        to = Some(new);
-                    }
-                }
-            }
             self.unminimize_window(&id, false, to);
         }
     }
@@ -5599,6 +5636,8 @@ impl<W: LayoutElement> Layout<W> {
         let Some(idx) = self.minimized_idx(window) else {
             return false;
         };
+        // brought back by hand in Desktop: it stays where it goes now
+        self.desk_folded.retain(|(id, _)| id != window);
         let MinimizedWindow {
             removed,
             output_name,

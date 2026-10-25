@@ -622,7 +622,14 @@ impl State {
         // Check for workspace changes.
         let mut seen = HashSet::new();
         let mut need_workspaces_changed = false;
+        // angel-niri (stacking.rs): Desktop doesn't show the empty workspace at the end
+        let shown = |mon: Option<&crate::layout::monitor::Monitor<Mapped>>, ws_idx: usize| {
+            !mon.is_some_and(|mon| mon.is_spare_workspace(ws_idx))
+        };
         for (mon, ws_idx, ws) in layout.workspaces() {
+            if !shown(mon, ws_idx) {
+                continue;
+            }
             let id = ws.id().get();
             seen.insert(id);
 
@@ -680,6 +687,7 @@ impl State {
 
             let workspaces = layout
                 .workspaces()
+                .filter(|(mon, ws_idx, _)| shown(*mon, *ws_idx))
                 .map(|(mon, ws_idx, ws)| {
                     let id = ws.id().get();
                     Workspace {

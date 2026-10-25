@@ -64,6 +64,8 @@ fn stacking_floats_columns_and_puts_them_back() {
     let before = columns(&mut f);
     assert_eq!(before, [vec![a], vec![b], vec![c.clone()]]);
 
+    // the places once settled: the windows hop as the mode switches (Tile::hop)
+    f.niri_complete_animations();
     let ws = f.niri().layout.active_workspace().unwrap();
     let on_screen: Vec<_> = ws
         .tiles_with_render_positions()
@@ -75,6 +77,7 @@ fn stacking_floats_columns_and_puts_them_back() {
     assert!(columns(&mut f).is_empty(), "columns left");
     assert_eq!(floating(&mut f).len(), 3);
     assert_eq!(floating(&mut f)[0], c, "the active window is not on top");
+    f.niri_complete_animations();
     let ws = f.niri().layout.active_workspace().unwrap();
     for (tile, pos) in ws.floating().tiles_with_render_positions() {
         if let Some((_, was)) = on_screen.iter().find(|(id, _)| *id == tile.window().window) {
@@ -362,5 +365,62 @@ fn stacking_gathers_on_the_first_workspace() {
         columns(&mut f),
         [vec![b], vec![c]],
         "not back in its columns"
+    );
+}
+
+// in Desktop the empty workspace at the end is out of reach and hidden; "+" opens it, with a
+// window too; back in the Strip the old workspaces come back on their numbers, the new one after
+#[test]
+fn stacking_desks_come_from_plus() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 100, 100);
+    let b = open(&mut f, id, 100, 100);
+    let c = open(&mut f, id, 100, 100);
+    let d = open(&mut f, id, 100, 100);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&b), 1, ActivateWindow::No);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&c), 2, ActivateWindow::No);
+    f.double_roundtrip(id);
+
+    set_stacking(&mut f, id, true);
+    let active = |f: &mut Fixture| {
+        let mon = f.niri().layout.monitors().next().unwrap();
+        (mon.active_workspace_idx(), mon.last_reachable_workspace())
+    };
+    assert_eq!(active(&mut f), (0, 0), "the spare workspace is reachable");
+    f.niri().layout.switch_workspace(3);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&d), 1, ActivateWindow::No);
+    assert_eq!(
+        active(&mut f),
+        (0, 0),
+        "switched or moved onto the spare one"
+    );
+
+    f.niri().layout.open_spare_workspace(None, Some(&d));
+    f.double_roundtrip(id);
+    assert_eq!(
+        active(&mut f),
+        (1, 1),
+        "\"+\" didn't take the window to a new desk"
+    );
+
+    set_stacking(&mut f, id, false);
+    let layout = &f.niri().layout;
+    let on = |win: &Window| {
+        (layout.workspaces())
+            .find(|(_, _, ws)| ws.has_window(win))
+            .map(|(_, idx, _)| idx)
+    };
+    assert_eq!(
+        (on(&a), on(&b), on(&c), on(&d)),
+        (Some(0), Some(1), Some(2), Some(3)),
+        "the desks are out of order"
     );
 }

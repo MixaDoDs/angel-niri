@@ -997,6 +997,19 @@ impl State {
             Action::SnapshotWindow(id, path) => {
                 self.snapshot_window(id, path.into());
             }
+            Action::OpenSpareWorkspace(output, window) => {
+                let window = window.and_then(|id| {
+                    let found = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                    found.map(|(_, m)| m.window.clone())
+                });
+                self.niri
+                    .layout
+                    .open_spare_workspace(output.as_deref(), window.as_ref());
+                if let Some(window) = window {
+                    self.focus_window(&window);
+                }
+                self.niri.queue_redraw_all();
+            }
             Action::SetStackingMode(on, title_font, title_style, buttons, green, top_inset) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);

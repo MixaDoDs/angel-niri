@@ -385,6 +385,25 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         path: String,
     },
+    /// Open a new workspace at the end of an output, in front (angel-niri).
+    ///
+    /// Mission Control's "+" in the stacking mode, where the empty workspace niri keeps at the end
+    /// is hidden: the view goes to it, with the window if one is given; left empty, it is hidden
+    /// again.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Open a new workspace at the end of an output")
+    )]
+    OpenSpareWorkspace {
+        /// Name of the output (the focused one if not given).
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        output: Option<String>,
+        /// Id of a window on that output to take along.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        window: Option<u64>,
+    },
     /// Turn the stacking mode on or off (angel-niri).
     ///
     /// On, every column floats where it is on screen and new windows open floating; off, the
