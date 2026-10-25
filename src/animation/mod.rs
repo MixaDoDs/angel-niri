@@ -328,6 +328,12 @@ impl Animation {
         self.duration
     }
 
+    /// angel-niri: starts `by` later, holding its first value until then.
+    pub fn delayed(mut self, by: Duration) -> Self {
+        self.start_time += by;
+        self
+    }
+
     pub fn offset(&mut self, offset: f64) {
         self.from += offset;
         self.to += offset;

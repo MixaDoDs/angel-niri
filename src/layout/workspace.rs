@@ -2262,11 +2262,13 @@ impl<W: LayoutElement> Workspace<W> {
         self.animate_moves_from(&from);
     }
 
-    /// The windows given move from where they were (`(id, render position)`) to where they are.
+    /// The windows given move from where they were (`(id, render position)`) to where they are,
+    /// and hop one after another in that order, so the switch of mode reads at a glance.
     fn animate_moves_from(&mut self, from: &[(W::Id, Point<f64, Logical>)]) {
         for (tile, pos) in self.tiles_with_render_positions_mut(false) {
-            if let Some((_, old)) = from.iter().find(|(id, _)| id == tile.window().id()) {
-                tile.animate_move_from(*old - pos);
+            if let Some(i) = from.iter().position(|(id, _)| id == tile.window().id()) {
+                tile.animate_move_from(from[i].1 - pos);
+                tile.hop(crate::stacking::HOP_STEP * i.min(8) as u32);
             }
         }
     }
@@ -2309,6 +2311,11 @@ impl<W: LayoutElement> Workspace<W> {
     /// angel-niri (stacking.rs): snaps a floating window to a part of the working area, or back.
     pub fn set_floating_snap(&mut self, id: &W::Id, snap: Option<Snap>) {
         self.floating.set_snap(id, snap, true);
+    }
+
+    /// angel-niri (stacking.rs): see `FloatingSpace::keep_below_top`.
+    pub fn keep_floating_below_top(&mut self, id: &W::Id) {
+        self.floating.keep_below_top(id);
     }
 
     /// angel-niri (window_throw.rs): sends a floating window flying.

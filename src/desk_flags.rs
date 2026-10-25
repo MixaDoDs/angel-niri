@@ -100,6 +100,7 @@ impl State {
                 id,
                 output: output.name(),
                 pos: [pos.x + 8., pos.y],
+                green: false,
             });
         }
     }

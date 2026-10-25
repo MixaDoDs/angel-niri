@@ -167,7 +167,14 @@ pub enum Action {
     #[knuffel(skip)]
     SnapshotWindow(u64, String),
     #[knuffel(skip)]
-    SetStackingMode(bool, Option<String>, Option<String>),
+    SetStackingMode(
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+    ),
     #[knuffel(skip)]
     SetClipboardKeep(bool),
     #[knuffel(skip)]
@@ -512,7 +519,12 @@ impl From<niri_ipc::Action> for Action {
                 on,
                 title_font,
                 title_style,
-            } => Self::SetStackingMode(on, title_font, title_style),
+                title_buttons,
+                green,
+                top_inset,
+            } => {
+                Self::SetStackingMode(on, title_font, title_style, title_buttons, green, top_inset)
+            }
             niri_ipc::Action::SetClipboardKeep { on } => Self::SetClipboardKeep(on),
             niri_ipc::Action::SetCastPause {
                 on,

@@ -281,3 +281,40 @@ fn stacking_keeps_the_column_of_a_minimized_window() {
     f.double_roundtrip(id);
     assert_eq!(columns(&mut f), [vec![a], vec![b], vec![c]]);
 }
+
+// in Desktop a window going full screen gets a workspace of its own right after its own, the view
+// along; back from full screen it floats on its old workspace again and the other one goes
+#[test]
+fn stacking_fullscreen_gets_its_own_workspace() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    set_stacking(&mut f, id, true);
+    let _a = open(&mut f, id, 300, 200);
+    let b = open(&mut f, id, 300, 200);
+    let ws_of = |f: &mut Fixture, win: &Window| {
+        let layout = &f.niri().layout;
+        let active = layout.monitors().next().unwrap().active_workspace_idx();
+        let all: Vec<_> = layout
+            .workspaces()
+            .map(|(_, idx, ws)| (idx, ws.has_window(win)))
+            .collect();
+        let idx = all.iter().find(|(_, has)| *has).map(|(idx, _)| *idx);
+        (idx, active, all.len())
+    };
+    assert_eq!(ws_of(&mut f, &b), (Some(0), 0, 2));
+
+    f.niri().layout.set_fullscreen(&b, true);
+    f.double_roundtrip(id);
+    assert_eq!(
+        ws_of(&mut f, &b),
+        (Some(1), 1, 3),
+        "not on a workspace of its own"
+    );
+
+    f.niri().layout.set_fullscreen(&b, false);
+    f.double_roundtrip(id);
+    let (idx, active, _) = ws_of(&mut f, &b);
+    assert_eq!((idx, active), (Some(0), 0), "not back where it was");
+    assert_eq!(floating(&mut f).len(), 2, "not floating again");
+}

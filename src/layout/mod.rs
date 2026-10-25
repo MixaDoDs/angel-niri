@@ -399,6 +399,10 @@ pub struct Layout<W: LayoutElement> {
     /// angel-niri (stacking.rs): a window just shaken while dragged, and the others on its
     /// workspace.
     shaken: Option<(W::Id, Vec<W::Id>)>,
+    /// angel-niri (stacking.rs): windows sent full screen onto a workspace of their own, and the
+    /// workspace each came from.
+    // shortcut: a closed window's entry stays (ids are never reused); prune it if this grows.
+    fullscreen_from: Vec<(W::Id, WorkspaceId)>,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -785,6 +789,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
             clock,
@@ -813,6 +818,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
             clock,
@@ -3693,11 +3699,66 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        // angel-niri (stacking.rs): in Desktop a window going full screen gets a workspace of its
+        // own right after its own, like a Mac; back from full screen it returns where it was.
+        let from = self.fullscreen_from.iter().position(|(win, _)| win == id);
+        let pending = (self.windows())
+            .any(|(_, win)| win.id() == id && win.pending_sizing_mode().is_fullscreen());
+        if is_fullscreen && from.is_none() && !pending && crate::stacking::on() {
+            self.fullscreen_onto_own_workspace(id);
+        }
+
         for ws in self.workspaces_mut() {
             if ws.has_window(id) {
                 ws.set_fullscreen(id, is_fullscreen);
+                break;
+            }
+        }
+
+        if !is_fullscreen {
+            if let Some(idx) = from {
+                let (_, from) = self.fullscreen_from.remove(idx);
+                self.back_from_own_workspace(id, from);
+            }
+        }
+    }
+
+    /// angel-niri (stacking.rs): moves a window about to go full screen onto a new workspace
+    /// right after its own, and the view along. A window alone on its workspace stays.
+    fn fullscreen_onto_own_workspace(&mut self, id: &W::Id) {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        for mon in monitors {
+            let Some(idx) = mon.workspaces.iter().position(|ws| ws.has_window(id)) else {
+                continue;
+            };
+            let ws = &mon.workspaces[idx];
+            if ws.tiles().count() <= 1 {
                 return;
             }
+            let from = ws.id();
+            mon.add_workspace_at(idx + 1);
+            mon.move_to_workspace(Some(id), idx + 1, ActivateWindow::Yes);
+            self.fullscreen_from.push((id.clone(), from));
+            return;
+        }
+    }
+
+    /// angel-niri (stacking.rs): a window back from full screen returns to the workspace it came
+    /// from (if still on its monitor), and the view along; its own workspace empties and goes.
+    fn back_from_own_workspace(&mut self, id: &W::Id, from: WorkspaceId) {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        for mon in monitors {
+            if !mon.has_window(id) {
+                continue;
+            }
+            if let Some(idx) = mon.idx_of_ws(from) {
+                mon.move_to_workspace(Some(id), idx, ActivateWindow::Yes);
+            }
+            return;
         }
     }
 
@@ -3706,6 +3767,14 @@ impl<W: LayoutElement> Layout<W> {
             if move_.tile.window().id() == id {
                 return;
             }
+        }
+
+        // angel-niri (stacking.rs): through set_fullscreen, for the workspace of its own.
+        if crate::stacking::on() || self.fullscreen_from.iter().any(|(win, _)| win == id) {
+            let current = (self.windows())
+                .any(|(_, win)| win.id() == id && win.pending_sizing_mode().is_fullscreen());
+            self.set_fullscreen(id, !current);
+            return;
         }
 
         for ws in self.workspaces_mut() {
@@ -4535,11 +4604,13 @@ impl<W: LayoutElement> Layout<W> {
                             None,
                         );
 
-                        // angel-niri (stacking.rs): let go at an edge, it snaps there.
-                        if let Some(snap) = move_.snap {
-                            if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.id() == ws_id)
-                            {
+                        // angel-niri (stacking.rs): let go at an edge, it snaps there; else
+                        // its title bar stays below the shell's top bar.
+                        if let Some(ws) = mon.workspaces.iter_mut().find(|ws| ws.id() == ws_id) {
+                            if let Some(snap) = move_.snap {
                                 ws.set_floating_snap(&win_id, Some(snap));
+                            } else if crate::stacking::on() && throw.is_none() {
+                                ws.keep_floating_below_top(&win_id);
                             }
                         }
                     }
@@ -5307,6 +5378,22 @@ impl<W: LayoutElement> Layout<W> {
             .find(|ws| ws.floating().has_window(window))
         {
             ws.set_floating_snap(window, snap);
+        }
+    }
+
+    /// angel-niri (stacking.rs): snapped windows fill their part again, after the room kept at
+    /// the top changed.
+    pub fn refresh_snaps(&mut self) {
+        for ws in self.workspaces_mut() {
+            let snapped: Vec<_> = (ws.floating().tiles())
+                .filter_map(|tile| {
+                    let id = tile.window().id();
+                    ws.floating().snap(id).map(|snap| (id.clone(), snap))
+                })
+                .collect();
+            for (id, snap) in snapped {
+                ws.set_floating_snap(&id, Some(snap));
+            }
         }
     }
 

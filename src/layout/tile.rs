@@ -134,6 +134,8 @@ pub struct Tile<W: LayoutElement> {
     /// angel-niri (desk_flags.rs): rolling up into the title bar or down from it, and whether it
     /// was shaded when last looked at.
     shade_anim: Option<Animation>,
+    /// angel-niri (stacking.rs): a hop up and back as the mode switches.
+    hop_anim: Option<Animation>,
     shade_seen: bool,
 
     /// Snapshot of the last render for use in the close animation.
@@ -262,6 +264,7 @@ impl<W: LayoutElement> Tile<W> {
             title_bar: RefCell::default(),
             title_active: false,
             shade_anim: None,
+            hop_anim: None,
             shade_seen: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
@@ -484,6 +487,9 @@ impl<W: LayoutElement> Tile<W> {
         if self.shade_anim.as_ref().is_some_and(|a| a.is_done()) {
             self.shade_anim = None;
         }
+        if self.hop_anim.as_ref().is_some_and(|a| a.is_done()) {
+            self.hop_anim = None;
+        }
 
         if let Some(open) = &mut self.open_animation {
             if open.is_done() {
@@ -543,6 +549,7 @@ impl<W: LayoutElement> Tile<W> {
             || self.squash.is_some()
             || self.wobble.is_some()
             || self.shade_anim.is_some()
+            || self.hop_anim.is_some()
     }
 
     /// angel-niri (window_throw.rs): squashes the tile against the edge a throw hit.
@@ -753,7 +760,20 @@ impl<W: LayoutElement> Tile<W> {
             offset += wobble.offset;
         }
 
+        if let Some(hop) = &self.hop_anim {
+            offset.y -= crate::stacking::hop_height(hop.value());
+        }
+
         offset
+    }
+
+    /// angel-niri (stacking.rs): hops up and back down, starting `delay` from now; not with the
+    /// window movement animation off.
+    pub fn hop(&mut self, delay: std::time::Duration) {
+        if self.options.animations.window_movement.0.off {
+            return;
+        }
+        self.hop_anim = Some(crate::stacking::hop_animation(self.clock.clone(), delay));
     }
 
     pub fn start_open_animation(&mut self) {

@@ -1,12 +1,13 @@
 //! angel-niri (stacking.rs): the title bars of windows while stacking.
 //!
 //! A floating window that left its decorations to the compositor (xdg-decoration server side) gets
-//! a pixel title bar: three round buttons on the left like traffic lights — close, minimize,
-//! maximize in red, yellow and green, their glyphs shown while the pointer is over them — and its
-//! icon and title in the middle in the shell's title font, all on the art-pixel grid. The active
-//! window's bar is in the focus ring's active colour and tints the lights, the others' in a dim
-//! grey of it with grey lights; a shell that recolours the ring recolours them too. Windows that
-//! draw their own title bars get none.
+//! a pixel title bar: three round buttons like traffic lights — close, minimize, maximize in red,
+//! yellow and green on the left (`--title-buttons right`: minimize, maximize, close on the right),
+//! their glyphs shown while the pointer is over them — and its icon and title in the middle in the
+//! shell's title font, all on the art-pixel grid. The active window's bar is in the focus ring's
+//! active colour with the lights in their own clear colours and a dark pixel outline, the others'
+//! in a dim grey of it with grey lights; a shell that recolours the ring recolours them too.
+//! Windows that draw their own title bars get none.
 //!
 //! The icon is the shell's: `$XDG_RUNTIME_DIR/angel-niri/title-icons/<app id>.png`, drawn eight
 //! art pixels square with nearest filtering before the title.
@@ -52,6 +53,16 @@ thread_local! {
     static FONT: RefCell<String> = const { RefCell::new(String::new()) };
     static MAC: Cell<bool> = const { Cell::new(false) };
     static LIGHT_THEME: Cell<bool> = const { Cell::new(false) };
+    static RIGHT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the buttons sit on the right (`--title-buttons right`), the badges then on the left.
+pub fn set_right(right: bool) {
+    RIGHT.with(|cell| cell.set(right));
+}
+
+fn right() -> bool {
+    RIGHT.with(Cell::get)
 }
 
 /// Whether the pixel bars are for a light theme (`--title-style light`): the inactive ones pale.
@@ -99,10 +110,10 @@ pub struct Extras {
     pub sticky: bool,
 }
 
-/// The badges of a bar of `width`, right to left: six art pixels square, two apart, four from the
-/// right; only the flags that are on.
-fn badges(width: f64, extras: Extras) -> Vec<(FramePart, Rectangle<f64, Logical>)> {
-    let right = (width / ART).floor() * ART;
+/// The badges of a bar of `width`, from the side away from the buttons: six art pixels square, two
+/// apart, four from the edge; only the flags that are on.
+fn badges(width: f64, extras: Extras, right: bool) -> Vec<(FramePart, Rectangle<f64, Logical>)> {
+    let edge = (width / ART).floor() * ART;
     let flags = [
         (FramePart::OnTop, extras.on_top),
         (FramePart::Sticky, extras.sticky),
@@ -112,27 +123,45 @@ fn badges(width: f64, extras: Extras) -> Vec<(FramePart, Rectangle<f64, Logical>
         .filter(|(_, on)| *on)
         .enumerate()
         .map(|(i, (part, _))| {
-            let x = right - (10. + 8. * i as f64) * ART;
+            let x = if right {
+                (4. + 8. * i as f64) * ART
+            } else {
+                edge - (10. + 8. * i as f64) * ART
+            };
             let rect = Rectangle::new(Point::from((x, 3. * ART)), Size::from((6. * ART, 6. * ART)));
             (part, rect)
         })
         .collect()
 }
 
-/// The buttons, left to right: close, minimize, maximize, six art pixels round, two apart, four
-/// from the left.
-fn buttons() -> [(FramePart, Rectangle<f64, Logical>); 3] {
+/// From one button to the next, in art pixels: three apart, room for their outlines.
+const PITCH: f64 = 9.;
+
+/// The buttons of a bar of `width`, six art pixels round, three apart, four from the edge: close,
+/// minimize, maximize from the left, or minimize, maximize, close up to the right.
+fn buttons(width: f64, right: bool) -> [(FramePart, Rectangle<f64, Logical>); 3] {
+    let edge = (width / ART).floor() * ART;
     let rect = |i: f64| {
-        Rectangle::new(
-            Point::from(((4. + 8. * i) * ART, 3. * ART)),
-            Size::from((6. * ART, 6. * ART)),
-        )
+        let x = if right {
+            edge - (10. + PITCH * (2. - i)) * ART
+        } else {
+            (4. + PITCH * i) * ART
+        };
+        Rectangle::new(Point::from((x, 3. * ART)), Size::from((6. * ART, 6. * ART)))
     };
-    [
-        (FramePart::Close, rect(0.)),
-        (FramePart::Minimize, rect(1.)),
-        (FramePart::Maximize, rect(2.)),
-    ]
+    if right {
+        [
+            (FramePart::Minimize, rect(0.)),
+            (FramePart::Maximize, rect(1.)),
+            (FramePart::Close, rect(2.)),
+        ]
+    } else {
+        [
+            (FramePart::Close, rect(0.)),
+            (FramePart::Minimize, rect(1.)),
+            (FramePart::Maximize, rect(2.)),
+        ]
+    }
 }
 
 /// Which part of the frame of a titled tile of `size` is at `pos` (relative to the tile, the
@@ -171,9 +200,9 @@ pub fn frame_part(
     if y >= TITLE_HEIGHT {
         return None;
     }
-    let part = buttons()
+    let part = buttons(w, right())
         .into_iter()
-        .chain(badges(w, extras))
+        .chain(badges(w, extras, right()))
         .find(|(_, rect)| rect.contains(pos))
         .map_or(FramePart::Title, |(part, _)| part);
     Some(part)
@@ -193,6 +222,7 @@ struct Look {
     icon: bool,
     mac: bool,
     light: bool,
+    right: bool,
     hover: bool,
     on_top: bool,
     sticky: bool,
@@ -252,6 +282,7 @@ impl TitleBar {
             icon,
             mac: mac(),
             light: light(),
+            right: right(),
             hover,
             on_top: extras.on_top,
             sticky: extras.sticky,
@@ -319,7 +350,7 @@ fn apart(c: [f64; 3], bg: [f64; 3], need: f64) -> [f64; 3] {
     out
 }
 
-/// How far a light stands from its bar at least.
+/// How far a light, or its outline, stands from its bar at least.
 const LIGHT_CONTRAST: f64 = 2.;
 
 const WHITE: [f64; 3] = [1., 1., 1.];
@@ -327,6 +358,17 @@ const BLACK: [f64; 3] = [0., 0., 0.];
 
 /// A round button, six by six art pixels.
 const LIGHT: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
+
+/// The outline around an active window's button, eight by eight art pixels: a light keeps its own
+/// clear colour on any bar, the outline sets it apart.
+const OUTLINE: [&str; 8] = [
+    "...##...", "..#..#..", ".#....#.", "#......#", "#......#", ".#....#.", "..#..#..", "...##...",
+];
+
+/// A light's outline: the light darkened.
+fn outline(c: [f64; 3]) -> [f64; 3] {
+    mix(c, BLACK, 0.55)
+}
 
 /// The glyphs on the buttons while the pointer is over them, four by four art pixels in the
 /// middle of each: close (×), minimize (–), maximize (+), all centred.
@@ -343,8 +385,8 @@ const BADGES: [[&str; 6]; 2] = [
     ["..####", "..#..#", "####.#", "######", "####..", "####.."],
 ];
 
-/// Red, yellow and green of the pixel skins; on a bar of a near colour moved apart from it.
-const PIXEL_LIGHTS: [[f64; 3]; 3] = [[0.85, 0.29, 0.25], [0.93, 0.71, 0.22], [0.38, 0.73, 0.31]];
+/// Red, yellow and green of the pixel skins, clear on every bar (the outline sets them apart).
+const PIXEL_LIGHTS: [[f64; 3]; 3] = [[0.95, 0.27, 0.23], [1., 0.77, 0.16], [0.27, 0.82, 0.29]];
 
 /// The Mac look's red, yellow and green.
 const MAC_LIGHTS: [[f64; 3]; 3] = [[1., 0.37, 0.34], [1., 0.74, 0.18], [0.16, 0.78, 0.25]];
@@ -361,6 +403,8 @@ fn draw(
     // one art pixel in physical pixels, never blurred over two
     let ap = (ART * scale).round().max(1.);
 
+    // the outline of the active pixel bar's lights
+    let mut ring = false;
     let (bg, text, lights, line) = if look.mac {
         let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
         let text = if look.active { [0.15; 3] } else { [0.4; 3] };
@@ -382,8 +426,9 @@ fn draw(
             mix([lum * 0.5; 3], accent, 0.2)
         };
         let text = ink(bg);
+        ring = look.active;
         let lights = if look.active {
-            PIXEL_LIGHTS.map(|c| apart(c, bg, LIGHT_CONTRAST))
+            PIXEL_LIGHTS
         } else {
             [apart(mix(bg, WHITE, 0.3), bg, LIGHT_CONTRAST); 3]
         };
@@ -439,9 +484,19 @@ fn draw(
         cr.set_operator(cairo::Operator::Over);
     }
 
-    for ((light, glyph), (_, button)) in lights.iter().zip(GLYPHS).zip(buttons()) {
+    let logical_width = f64::from(width) / scale;
+    for (part, button) in buttons(logical_width, look.right) {
+        let i = match part {
+            FramePart::Close => 0,
+            FramePart::Minimize => 1,
+            _ => 2,
+        };
+        let (light, glyph) = (&lights[i], GLYPHS[i]);
         let x = (button.loc.x / ART).round() * ap;
         let y = (button.loc.y / ART).round() * ap;
+        if ring {
+            sprite(&cr, outline(*light), x - ap, y - ap, &OUTLINE);
+        }
         sprite(&cr, *light, x, y, &LIGHT);
         if look.hover {
             sprite(&cr, mix(*light, ink(*light), 0.75), x + ap, y + ap, &glyph);
@@ -453,7 +508,7 @@ fn draw(
         on_top: look.on_top,
         sticky: look.sticky,
     };
-    for (part, badge) in badges(f64::from(width) / scale, extras) {
+    for (part, badge) in badges(logical_width, extras, look.right) {
         let rows = if part == FramePart::OnTop {
             &BADGES[0]
         } else {
@@ -495,7 +550,7 @@ fn draw(
     } else {
         0.
     };
-    let margin = (28. * ap).min(f64::from(width) / 2.);
+    let margin = (32. * ap).min(f64::from(width) / 2.);
     let text_room = (f64::from(width) - 2. * margin - icon_room).max(0.);
     layout.set_width((text_room * f64::from(pangocairo::pango::SCALE)) as i32);
     layout.set_text(&look.title);
@@ -589,15 +644,23 @@ mod tests {
         let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size, extras);
         assert_eq!(at(100., 10.), Some(FramePart::Title));
         assert_eq!(at(100., 100.), None, "the window itself");
-        // close, minimize, maximize from the left: 4 art px in, 6 wide, 2 apart
+        // close, minimize, maximize from the left: 4 art px in, 6 wide, 3 apart
         assert_eq!(at(10., 10.), Some(FramePart::Close));
-        assert_eq!(at(26., 10.), Some(FramePart::Minimize));
-        assert_eq!(at(42., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(28., 10.), Some(FramePart::Minimize));
+        assert_eq!(at(46., 10.), Some(FramePart::Maximize));
         assert_eq!(at(390., 10.), Some(FramePart::Title));
         assert_eq!(at(-3., 150.), Some(FramePart::Edge(ResizeEdge::LEFT)));
         assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
         assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
         assert_eq!(at(-10., 150.), None, "beyond the grab");
+
+        // on the right, like Windows: minimize, maximize, close up to 4 art px from the edge
+        set_right(true);
+        assert_eq!(at(400. - 10., 10.), Some(FramePart::Close));
+        assert_eq!(at(400. - 28., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(400. - 46., 10.), Some(FramePart::Minimize));
+        assert_eq!(at(10., 10.), Some(FramePart::Title));
+        set_right(false);
     }
 
     #[test]
@@ -608,8 +671,8 @@ mod tests {
         ] {
             let bg = [16, 8, 0].map(|s| f64::from((hex >> s) & 0xff) / 255.);
             for light in PIXEL_LIGHTS {
-                let c = apart(light, bg, LIGHT_CONTRAST);
-                assert!(contrast(c, bg) >= LIGHT_CONTRAST - 1e-9, "{hex:06x}");
+                let apart = contrast(light, bg).max(contrast(outline(light), bg));
+                assert!(apart >= LIGHT_CONTRAST, "{hex:06x}");
             }
             assert!(contrast(ink(bg), bg) >= 4.5, "{hex:06x}");
         }

@@ -588,6 +588,19 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.data[idx].snap = snap;
     }
 
+    /// angel-niri (stacking.rs): a window let go with its top above the working area (under the
+    /// shell's top bar) comes down to it, as a Mac's windows never go under its menu bar.
+    pub fn keep_below_top(&mut self, id: &W::Id) {
+        let Some(idx) = self.idx_of(id) else {
+            return;
+        };
+        let pos = self.data[idx].logical_pos;
+        let top = self.working_area.loc.y;
+        if pos.y < top {
+            self.move_to(idx, Point::from((pos.x, top)), true);
+        }
+    }
+
     /// angel-niri (stacking.rs): the window leaves its snapped part without going back to its
     /// old size (it is being resized by hand); returns the size it had before it snapped.
     pub fn forget_snap(&mut self, id: &W::Id) -> Option<Size<f64, Logical>> {

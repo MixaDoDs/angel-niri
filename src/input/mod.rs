@@ -997,13 +997,23 @@ impl State {
             Action::SnapshotWindow(id, path) => {
                 self.snapshot_window(id, path.into());
             }
-            Action::SetStackingMode(on, title_font, title_style) => {
+            Action::SetStackingMode(on, title_font, title_style, buttons, green, top_inset) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);
                 }
                 if let Some(style) = title_style {
                     crate::stacking_title::set_mac(style == "mac");
                     crate::stacking_title::set_light(style == "light");
+                }
+                if let Some(buttons) = buttons {
+                    crate::stacking_title::set_right(buttons == "right");
+                }
+                if let Some(green) = green {
+                    crate::stacking::set_green_fullscreen(green == "fullscreen");
+                }
+                if let Some(inset) = top_inset {
+                    crate::stacking::set_top_inset(inset);
+                    self.niri.layout.refresh_snaps();
                 }
                 if !on {
                     self.clear_window_flags();

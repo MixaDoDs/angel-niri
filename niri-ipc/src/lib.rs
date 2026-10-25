@@ -409,6 +409,21 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         title_style: Option<String>,
+        /// Side of the title bars' buttons: `left` (like a Mac) or `right` (like Windows). Kept as
+        /// it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        title_buttons: Option<String>,
+        /// What the green button does: `maximize` or `fullscreen` (onto a workspace of its own,
+        /// like a Mac). Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        green: Option<String>,
+        /// Room kept free at the top of every monitor for windows snapped or maximized, in logical
+        /// pixels (the shell's top bar when it reserves none itself). Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        top_inset: Option<f64>,
     },
     /// Open pinned programs where they are pinned (angel-niri).
     ///
@@ -2110,6 +2125,10 @@ pub enum Event {
         output: String,
         /// Where the pointer is on that output, in logical pixels.
         pos: [f64; 2],
+        /// The pointer rests on the green button: the shell shows its size menu instead (full
+        /// screen, maximize, halves, another monitor).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        green: bool,
     },
     /// A toplevel window was closed.
     WindowClosed {

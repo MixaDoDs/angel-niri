@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use niri_config::Color;
 use niri_ipc::Event;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::backend::input::MouseButton;
 use smithay::backend::renderer::element::Kind;
 use smithay::desktop::Window;
@@ -38,6 +39,36 @@ use crate::utils::get_monotonic_time;
 /// How far a new floating window steps down and right from one already in its place.
 pub const CASCADE: f64 = 32.;
 
+/// Switching modes, the windows hop up this high one after another, this far apart.
+pub const HOP: f64 = 16.;
+pub const HOP_STEP: Duration = Duration::from_millis(55);
+const HOP_MS: u64 = 300;
+
+/// How high a hop `progress` (0 … 1) in is.
+pub fn hop_height(progress: f64) -> f64 {
+    if progress <= 0. || progress >= 1. {
+        // exactly back in place, not sin(π)'s rounding off it
+        return 0.;
+    }
+    HOP * (std::f64::consts::PI * progress).sin()
+}
+
+/// A hop that starts `delay` from now.
+pub fn hop_animation(
+    clock: crate::animation::Clock,
+    delay: Duration,
+) -> crate::animation::Animation {
+    crate::animation::Animation::ease(
+        clock,
+        0.,
+        1.,
+        0.,
+        HOP_MS,
+        crate::animation::Curve::EaseOutQuad,
+    )
+    .delayed(delay)
+}
+
 /// Where a floating window sits snapped, filling part of the working area; it gets its own size
 /// and place back when it leaves (`FloatingSpace::set_snap`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +83,11 @@ pub enum Snap {
 }
 
 impl Snap {
-    /// The part of `area` it fills.
-    pub fn rect(self, area: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
+    /// The part of `area` it fills, below the room kept at the top (`top_inset()`).
+    pub fn rect(self, mut area: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
+        let inset = top_inset().min(area.size.h / 2.);
+        area.loc.y += inset;
+        area.size.h -= inset;
         let mut rect = area;
         let (half_w, half_h) = ((area.size.w / 2.).round(), (area.size.h / 2.).round());
         if !matches!(self, Snap::Maximized) {
@@ -251,6 +285,13 @@ impl Shake {
 
 thread_local! {
     static ON: Cell<bool> = const { Cell::new(false) };
+    /// Whether the green button sends the window full screen instead of maximizing it.
+    static GREEN_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
+    /// Room kept free at the top of the working area for snapped and maximized windows.
+    static TOP_INSET: Cell<f64> = const { Cell::new(0.) };
+    /// The window whose green button the pointer rests on, since when, and whether its size
+    /// menu was asked for.
+    static GREEN_HOVER: RefCell<Option<(Window, Duration, bool)>> = const { RefCell::new(None) };
     /// Whether the pointer shows a resize arrow over a window's edge.
     static EDGE_CURSOR: Cell<bool> = const { Cell::new(false) };
     /// The window shaken last, and the ones that shake minimized.
@@ -265,6 +306,25 @@ pub fn on() -> bool {
 pub(crate) fn set_flag(on: bool) {
     ON.with(|cell| cell.set(on));
 }
+
+/// `--green fullscreen`: the green button sends a window full screen (onto a workspace of its
+/// own) instead of maximizing it.
+pub fn set_green_fullscreen(on: bool) {
+    GREEN_FULLSCREEN.with(|cell| cell.set(on));
+}
+
+/// `--top-inset`: the shell's top bar reserves no room of its own, so snapped and maximized
+/// windows keep clear of it here.
+pub fn set_top_inset(inset: f64) {
+    TOP_INSET.with(|cell| cell.set(inset.clamp(0., 200.)));
+}
+
+pub fn top_inset() -> f64 {
+    TOP_INSET.with(Cell::get)
+}
+
+/// How long the pointer rests on the green button before the size menu opens.
+const GREEN_MENU_DELAY: Duration = Duration::from_millis(600);
 
 /// The decoration mode a client asked for, kept while stacking overrides it.
 struct WantedDecoration(Cell<Option<DecorationMode>>);
@@ -422,6 +482,7 @@ impl State {
                         id,
                         output: output.name(),
                         pos: [pos.x, pos.y],
+                        green: false,
                     });
                 }
             }
@@ -510,6 +571,29 @@ impl State {
         for (_, mapped) in self.niri.layout.windows() {
             changed |= mapped.set_title_hover(hovered == Some(&mapped.window));
         }
+
+        // resting on the green button opens the size menu, like a Mac's
+        let green = match &under {
+            Some((window, FramePart::Maximize)) => Some(window.clone()),
+            _ => None,
+        };
+        let entered = GREEN_HOVER.with(|cell| {
+            let mut hover = cell.borrow_mut();
+            if hover.as_ref().map(|(win, _, _)| win) == green.as_ref() {
+                return false;
+            }
+            *hover = green.map(|win| (win, get_monotonic_time(), false));
+            hover.is_some()
+        });
+        if entered {
+            self.niri
+                .event_loop
+                .insert_source(Timer::from_duration(GREEN_MENU_DELAY), |_, _, state| {
+                    state.green_menu_due();
+                    TimeoutAction::Drop
+                })
+                .unwrap();
+        }
         if changed {
             self.niri.queue_redraw_all();
         }
@@ -524,6 +608,51 @@ impl State {
                 cursor.set_cursor_image(CursorImageStatus::default_named());
             }
             None => (),
+        }
+    }
+
+    /// The pointer may have rested on a green button long enough: the shell shows that window's
+    /// size menu at the pointer.
+    fn green_menu_due(&mut self) {
+        let window = GREEN_HOVER.with(|cell| {
+            let mut hover = cell.borrow_mut();
+            let (win, since, sent) = hover.as_mut()?;
+            // a timer of an earlier rest, or the menu is out already
+            if *sent
+                || get_monotonic_time().saturating_sub(*since) + Duration::from_millis(20)
+                    < GREEN_MENU_DELAY
+            {
+                return None;
+            }
+            *sent = true;
+            Some(win.clone())
+        });
+        let Some(window) = window else {
+            return;
+        };
+        let pointer = self.niri.seat.get_pointer().unwrap();
+        if pointer.is_grabbed() {
+            return;
+        }
+        let Some((output, pos)) = self.niri.output_under(pointer.current_location()) else {
+            return;
+        };
+        let output = output.clone();
+        if self.niri.layout.frame_part_under(&output, pos)
+            != Some((window.clone(), FramePart::Maximize))
+        {
+            return;
+        }
+        let id = (self.niri.layout.windows())
+            .find(|(_, m)| m.window == window)
+            .map(|(_, m)| m.id().get());
+        if let (Some(id), Some(server)) = (id, &self.niri.ipc_server) {
+            server.send_transient_event(Event::WindowMenuRequested {
+                id,
+                output: output.name(),
+                pos: [pos.x, pos.y],
+                green: true,
+            });
         }
     }
 
@@ -552,7 +681,11 @@ impl State {
             FramePart::Minimize => self.request_minimize(&window),
             FramePart::Maximize => {
                 self.niri.layout.activate_window(&window);
-                if !self.unshade(&window) {
+                if self.unshade(&window) {
+                    // unrolled first, like a double click
+                } else if GREEN_FULLSCREEN.with(Cell::get) {
+                    self.niri.layout.toggle_fullscreen(&window);
+                } else {
                     self.niri.layout.toggle_maximized(&window);
                 }
             }
