@@ -2463,18 +2463,28 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     pub fn tiles_with_ipc_layouts(&self) -> impl Iterator<Item = (&Tile<W>, WindowLayout)> {
+        let scale = self.scale;
+        let view_x = self.target_view_pos();
         self.columns
             .iter()
             .enumerate()
             .flat_map(move |(col_idx, col)| {
-                col.tiles().enumerate().map(move |(tile_idx, (tile, _))| {
-                    let layout = WindowLayout {
-                        // Our indices are 1-based, consistent with the actions.
-                        pos_in_scrolling_layout: Some((col_idx + 1, tile_idx + 1)),
-                        ..tile.ipc_layout_template()
-                    };
-                    (tile, layout)
-                })
+                let col_x = self.column_x(col_idx) - view_x;
+                col.tiles()
+                    .enumerate()
+                    .map(move |(tile_idx, (tile, tile_off))| {
+                        // angel-niri: where the tile stands once the view settles (the shell's
+                        // angel sits on it); the target, not the animation, so one event per move.
+                        let pos = Point::from((col_x, 0.)) + tile_off;
+                        let pos = pos.to_physical_precise_round(scale).to_logical(scale);
+                        let layout = WindowLayout {
+                            // Our indices are 1-based, consistent with the actions.
+                            pos_in_scrolling_layout: Some((col_idx + 1, tile_idx + 1)),
+                            tile_pos_in_workspace_view: Some(pos.into()),
+                            ..tile.ipc_layout_template()
+                        };
+                        (tile, layout)
+                    })
             })
     }
 
