@@ -87,6 +87,47 @@ pub mod tab_indicator;
 pub mod tile;
 pub mod workspace;
 
+/// angel-niri (desk_throw.rs): throws `thrown` (window, far) on `ws` one after another, arriving
+/// or `leaving`; their impacts.
+fn throw_tiles<W: LayoutElement>(
+    ws: &mut Workspace<W>,
+    thrown: &[(W::Id, bool)],
+    leaving: bool,
+    view_h: f64,
+    now: Duration,
+    output: &str,
+) -> Vec<niri_ipc::DeskThrow> {
+    let far = thrown.iter().any(|(_, far)| *far);
+    let step = crate::desk_throw::step(thrown.len(), far);
+    let mut hits = Vec::new();
+    let mut i = 0;
+    for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
+        let id = tile.window().id().clone();
+        let Some(order) = thrown.iter().position(|(win, _)| *win == id) else {
+            continue;
+        };
+        let far = thrown[order].1;
+        let size = tile.animated_tile_size();
+        tile.throw(step * order as u32, leaving, far, pos.y, view_h, i % 2 == 0);
+        i += 1;
+        let Some(fly) = tile.fly() else {
+            continue;
+        };
+        let Some(hit) = fly.hit_in(now) else {
+            continue;
+        };
+        hits.push(niri_ipc::DeskThrow {
+            output: output.to_owned(),
+            pos: [pos.x + size.w / 2., if leaving { view_h } else { 0. }],
+            in_ms: hit.as_millis() as u64,
+            far,
+            bottom: leaving,
+        });
+    }
+    hits.sort_by_key(|hit| hit.in_ms);
+    hits
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -399,6 +440,11 @@ pub struct Layout<W: LayoutElement> {
     /// angel-niri (stacking.rs): the workspaces after a monitor's first whose windows the
     /// stacking mode gathered onto it, to go back when it ends.
     desk_gathered: Vec<GatheredDesk<W>>,
+    /// angel-niri (desk_throw.rs): impacts of the windows just thrown, for the shell; and the
+    /// stacking end waiting for the windows flying off (its number, to tell a newer one apart).
+    pub desk_throws: Vec<niri_ipc::DeskThrow>,
+    throw_out: Option<u64>,
+    throw_outs: u64,
     /// angel-niri (stacking.rs): a window just shaken while dragged, and the others on its
     /// workspace.
     shaken: Option<(W::Id, Vec<W::Id>)>,
@@ -805,6 +851,9 @@ impl<W: LayoutElement> Layout<W> {
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
+            desk_throws: Vec::new(),
+            throw_out: None,
+            throw_outs: 0,
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -835,6 +884,9 @@ impl<W: LayoutElement> Layout<W> {
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
+            desk_throws: Vec::new(),
+            throw_out: None,
+            throw_outs: 0,
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -5481,6 +5533,14 @@ impl<W: LayoutElement> Layout<W> {
     /// (the owner, 26.10: "all onto desk 1, I'll place them myself", each monitor keeping its
     /// own). Off, they go back to their workspaces and columns.
     pub fn set_stacking(&mut self, on: bool) {
+        // a stacking end waiting for windows to fly off: done now (or called off)
+        if self.throw_out.take().is_some() {
+            for ws in self.workspaces_mut() {
+                for tile in ws.tiles_mut() {
+                    tile.stop_fly();
+                }
+            }
+        }
         if crate::stacking::on() == on {
             return;
         }
@@ -5524,12 +5584,16 @@ impl<W: LayoutElement> Layout<W> {
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
             return;
         };
+        let throw = crate::desk_throw::on();
+        let now = self.clock.now();
         for mon in monitors.iter_mut() {
             let shown = mon.active_workspace_idx();
             let focus = mon.workspaces[shown]
                 .active_window()
                 .map(|win| win.id().clone());
             let into = mon.workspaces[0].id();
+            // (window, far): from the next desk first, the hard hits last
+            let mut thrown: Vec<(W::Id, bool)> = Vec::new();
             for idx in 1..mon.workspaces.len() {
                 let ws = &mut mon.workspaces[idx];
                 if ws.name().is_some() {
@@ -5559,6 +5623,7 @@ impl<W: LayoutElement> Layout<W> {
                         None,
                     );
                 }
+                thrown.extend(windows.iter().map(|win| (win.clone(), idx >= 2)));
                 self.desk_gathered.push(GatheredDesk {
                     output: mon.output_name().clone(),
                     idx,
@@ -5567,6 +5632,19 @@ impl<W: LayoutElement> Layout<W> {
                     windows,
                     columns,
                 });
+            }
+            if throw && !thrown.is_empty() {
+                thrown.sort_by_key(|(_, far)| *far);
+                let output = mon.output_name().clone();
+                let view_h = mon.view_size().h;
+                self.desk_throws.extend(throw_tiles(
+                    &mut mon.workspaces[0],
+                    &thrown,
+                    false,
+                    view_h,
+                    now,
+                    &output,
+                ));
             }
             if shown != 0 {
                 mon.switch_workspace(0);
@@ -5580,6 +5658,67 @@ impl<W: LayoutElement> Layout<W> {
                 mon.workspaces[0].activate_window(&focus);
             }
         }
+    }
+
+    /// angel-niri (desk_throw.rs): ending stacking, the gathered windows still on a shown first
+    /// workspace fly off its bottom first; how long that takes and its number for
+    /// `throw_out_pending` (the caller ends stacking then), or `None` with nothing to throw.
+    pub fn throw_out(&mut self) -> Option<(Duration, u64)> {
+        if !crate::desk_throw::on() || !crate::stacking::on() {
+            return None;
+        }
+        let now = self.clock.now();
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return None;
+        };
+        let mut longest = Duration::ZERO;
+        for mon in monitors.iter_mut() {
+            let shown = mon.active_workspace_idx();
+            let into = mon.workspaces[shown].id();
+            let mut thrown: Vec<(W::Id, bool)> = Vec::new();
+            for desk in &self.desk_gathered {
+                if desk.output != *mon.output_name() || desk.into != into {
+                    continue;
+                }
+                let ws = &mon.workspaces[shown];
+                thrown.extend(
+                    (desk.windows.iter())
+                        .filter(|win| ws.has_window(win))
+                        .map(|win| (win.clone(), desk.idx >= 2)),
+                );
+            }
+            if thrown.is_empty() {
+                continue;
+            }
+            thrown.sort_by_key(|(_, far)| *far);
+            let output = mon.output_name().clone();
+            let view_h = mon.view_size().h;
+            let n = thrown.len();
+            let far = thrown.iter().any(|(_, far)| *far);
+            let hits = throw_tiles(
+                &mut mon.workspaces[shown],
+                &thrown,
+                true,
+                view_h,
+                now,
+                &output,
+            );
+            self.desk_throws.extend(hits);
+            longest = longest.max(
+                crate::desk_throw::step(n, far) * (n as u32 - 1) + crate::desk_throw::longest(),
+            );
+        }
+        if longest.is_zero() {
+            return None;
+        }
+        self.throw_outs += 1;
+        self.throw_out = Some(self.throw_outs);
+        Some((longest, self.throw_outs))
+    }
+
+    /// Whether the stacking end numbered `n` still waits (nothing ended or started it since).
+    pub fn throw_out_pending(&self, n: u64) -> bool {
+        self.throw_out == Some(n)
     }
 
     fn ungather_desks(&mut self) {

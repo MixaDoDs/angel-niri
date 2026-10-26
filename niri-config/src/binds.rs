@@ -286,6 +286,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetMinimizeOnCopy(bool),
     #[knuffel(skip)]
+    SetDeskThrow(bool),
+    #[knuffel(skip)]
     SnapshotWindow(u64, String),
     #[knuffel(skip)]
     OpenSpareWorkspace(Option<String>, Option<u64>),
@@ -643,6 +645,7 @@ impl From<niri_ipc::Action> for Action {
             ),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
             niri_ipc::Action::SetMinimizeOnCopy { on } => Self::SetMinimizeOnCopy(on),
+            niri_ipc::Action::SetDeskThrow { on } => Self::SetDeskThrow(on),
             niri_ipc::Action::SnapshotWindow { id, path } => Self::SnapshotWindow(id, path),
             niri_ipc::Action::OpenSpareWorkspace { output, window } => {
                 Self::OpenSpareWorkspace(output, window)

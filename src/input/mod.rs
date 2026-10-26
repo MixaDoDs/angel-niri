@@ -1099,6 +1099,9 @@ impl State {
             Action::SetMinimizeOnCopy(on) => {
                 crate::minimize::set_on_copy(on);
             }
+            Action::SetDeskThrow(on) => {
+                crate::desk_throw::set(on);
+            }
             Action::SnapshotWindow(id, path) => {
                 self.snapshot_window(id, path.into());
             }
@@ -1157,9 +1160,7 @@ impl State {
                 if !on {
                     self.clear_window_flags();
                 }
-                self.niri.layout.set_stacking(on);
-                self.stacking_decorations();
-                self.niri.queue_redraw_all();
+                self.switch_stacking(on);
             }
             Action::SetPointerLock(on, output) => {
                 self.niri.set_pointer_lock(on, output);

@@ -403,6 +403,21 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Throw windows between desks as stacking starts and ends (angel-niri).
+    ///
+    /// On, the windows stacking gathers onto a monitor's first workspace fly in one after another
+    /// (from further desks they slam into the top edge), and fly back off the bottom when it ends;
+    /// each impact is told in [`Event::DesksThrown`].
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Throw windows between desks as stacking starts and ends")
+    )]
+    SetDeskThrow {
+        /// Throw them (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Save how a window looks now to a PNG, quietly (angel-niri).
     ///
     /// For a taskbar's previews: unlike `screenshot-window` nothing goes to the clipboard and no
@@ -1902,6 +1917,22 @@ pub struct Timestamp {
     pub nanos: u32,
 }
 
+/// One window thrown between desks hitting an edge of its output (angel-niri).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct DeskThrow {
+    /// Output it is on.
+    pub output: String,
+    /// Where it hits on that output, in logical pixels.
+    pub pos: [f64; 2],
+    /// In how many milliseconds from now.
+    pub in_ms: u64,
+    /// From a desk further than the next one: a hard hit.
+    pub far: bool,
+    /// The bottom edge (leaving), else the top one (arriving).
+    pub bottom: bool,
+}
+
 /// Position- and size-related properties of a [`Window`].
 ///
 /// Optional properties will be unset for some windows, do not rely on them being present. Whether
@@ -2196,6 +2227,12 @@ pub enum Event {
         rect: Option<[f64; 4]>,
         /// Path of a PNG snapshot of the window, cut to its geometry, if one was made.
         snapshot: Option<String>,
+    },
+    /// Windows were thrown between desks as stacking started or ended (angel-niri,
+    /// [`Action::SetDeskThrow`]): where and when each one hits an edge of its output.
+    DesksThrown {
+        /// The impacts, soonest first.
+        throws: Vec<DeskThrow>,
     },
     /// A window's title bar was right-clicked while stacking (angel-niri): the shell shows its
     /// window menu.

@@ -15,6 +15,8 @@ pub struct Shaders {
     pub shadow: Option<ShaderProgram>,
     /// angel-niri (inactive_dim.rs)
     pub dim: Option<ShaderProgram>,
+    /// angel-niri (desk_throw.rs)
+    pub throw: Option<ShaderProgram>,
     pub clipped_surface: Option<GlesTexProgram>,
     pub postprocess_and_clip: Option<GlesTexProgram>,
     pub resize: Option<ShaderProgram>,
@@ -31,6 +33,7 @@ pub enum ProgramType {
     Border,
     Shadow,
     Dim,
+    Throw,
     Resize,
     Close,
     Open,
@@ -104,6 +107,24 @@ impl Shaders {
         )
         .map_err(|err| {
             warn!("error compiling dim shader: {err:?}");
+        })
+        .ok();
+
+        let throw = ShaderProgram::compile(
+            renderer,
+            include_str!("throw.frag"),
+            &[
+                UniformName::new("throw_tex_size", UniformType::_2f),
+                UniformName::new("throw_geo_to_tex", UniformType::Matrix3x3),
+                UniformName::new("throw_tile_loc", UniformType::_2f),
+                UniformName::new("throw_tile_size", UniformType::_2f),
+                UniformName::new("throw_angle", UniformType::_1f),
+                UniformName::new("throw_pixel", UniformType::_1f),
+            ],
+            &["niri_tex"],
+        )
+        .map_err(|err| {
+            warn!("error compiling throw shader: {err:?}");
         })
         .ok();
 
@@ -185,6 +206,7 @@ impl Shaders {
             border,
             shadow,
             dim,
+            throw,
             clipped_surface,
             postprocess_and_clip,
             resize,
@@ -236,6 +258,7 @@ impl Shaders {
             ProgramType::Border => self.border.clone(),
             ProgramType::Shadow => self.shadow.clone(),
             ProgramType::Dim => self.dim.clone(),
+            ProgramType::Throw => self.throw.clone(),
             ProgramType::Resize => self
                 .custom_resize
                 .borrow()

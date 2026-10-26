@@ -455,3 +455,56 @@ fn stacking_desks_come_from_plus() {
         "the desks are out of order"
     );
 }
+
+// with the throw on, the gathered windows fly in (the one from desk 3 hits the top), and ending
+// stacking waits for them to fly off the bottom before they go back
+#[test]
+fn stacking_throws_the_gathered_windows() {
+    crate::desk_throw::set(true);
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 100, 100);
+    let b = open(&mut f, id, 100, 100);
+    let c = open(&mut f, id, 100, 100);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&b), 1, ActivateWindow::No);
+    f.niri()
+        .layout
+        .move_to_workspace(Some(&c), 2, ActivateWindow::No);
+    f.double_roundtrip(id);
+
+    let flying = |f: &mut Fixture| -> Vec<Window> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.tiles()
+            .filter(|tile| tile.fly().is_some())
+            .map(|tile| tile.window().window.clone())
+            .collect()
+    };
+
+    set_stacking(&mut f, id, true);
+    let fly = flying(&mut f);
+    assert!(fly.len() == 2 && fly.contains(&b) && fly.contains(&c));
+    let throws = std::mem::take(&mut f.niri().layout.desk_throws);
+    assert_eq!(throws.len(), 1, "only the far one hits");
+    assert!(throws[0].far && !throws[0].bottom);
+    assert_eq!(throws[0].pos[1], 0.);
+    f.niri_complete_animations();
+    assert!(flying(&mut f).is_empty());
+
+    let (wait, n) = f.niri().layout.throw_out().unwrap();
+    assert!(wait <= std::time::Duration::from_secs(1));
+    assert!(crate::stacking::on(), "ended before they flew off");
+    assert_eq!(flying(&mut f).len(), 2);
+    let throws = std::mem::take(&mut f.niri().layout.desk_throws);
+    assert!(throws.iter().all(|hit| hit.bottom && hit.pos[1] == 1080.));
+    assert!(f.niri().layout.throw_out_pending(n));
+
+    set_stacking(&mut f, id, false);
+    assert!(!f.niri().layout.throw_out_pending(n));
+    assert!(flying(&mut f).is_empty(), "still flying on their desks");
+    let ws = f.niri().layout.active_workspace().unwrap();
+    assert!(ws.has_window(&a) && !ws.has_window(&b) && !ws.has_window(&c));
+    crate::desk_throw::set(false);
+}

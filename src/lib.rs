@@ -14,6 +14,7 @@ pub mod cursor_zoom;
 #[cfg(feature = "dbus")]
 pub mod dbus;
 pub mod desk_flags;
+pub mod desk_throw;
 pub mod frame_clock;
 pub mod game;
 pub mod handlers;

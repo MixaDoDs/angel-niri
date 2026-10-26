@@ -6,9 +6,12 @@ use std::rc::Rc;
 use niri_config::utils::MergeWith as _;
 use niri_config::{Color, CornerRadius, GradientInterpolation};
 use niri_ipc::WindowLayout;
-use smithay::backend::renderer::element::utils::RescaleRenderElement;
+use smithay::backend::renderer::element::utils::{
+    Relocate, RelocateRenderElement, RescaleRenderElement,
+};
 use smithay::backend::renderer::element::{Element, Kind};
-use smithay::backend::renderer::gles::{GlesRenderer, Uniform};
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture, Uniform};
+use smithay::backend::renderer::Texture as _;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 
 use super::focus_ring::{FocusRing, FocusRingRenderElement};
@@ -30,7 +33,7 @@ use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::resize::ResizeRenderElement;
 use crate::render_helpers::shader_element::ShaderRenderElement;
-use crate::render_helpers::shaders::ProgramType;
+use crate::render_helpers::shaders::{mat3_uniform, ProgramType, Shaders};
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::snapshot::RenderSnapshot;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -136,6 +139,8 @@ pub struct Tile<W: LayoutElement> {
     shade_anim: Option<Animation>,
     /// angel-niri (stacking.rs): a hop up and back as the mode switches.
     hop_anim: Option<Animation>,
+    /// angel-niri (desk_throw.rs): thrown onto desk 1 or back off it as stacking starts or ends.
+    fly: Option<crate::desk_throw::Fly>,
     shade_seen: bool,
 
     /// Snapshot of the last render for use in the close animation.
@@ -172,6 +177,7 @@ niri_render_elements! {
         ClippedSurface = ClippedSurfaceRenderElement<R>,
         Offscreen = OffscreenRenderElement,
         Deform = RescaleRenderElement<OffscreenRenderElement>,
+        Throw = RelocateRenderElement<ShaderRenderElement>,
         ExtraDamage = ExtraDamage,
         BackgroundEffect = BackgroundEffectElement,
         Title = PrimaryGpuTextureRenderElement,
@@ -265,6 +271,7 @@ impl<W: LayoutElement> Tile<W> {
             title_active: false,
             shade_anim: None,
             hop_anim: None,
+            fly: None,
             shade_seen: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
@@ -490,6 +497,10 @@ impl<W: LayoutElement> Tile<W> {
         if self.hop_anim.as_ref().is_some_and(|a| a.is_done()) {
             self.hop_anim = None;
         }
+        // a window leaving keeps its flight's end (below the output) until it goes
+        if self.fly.as_ref().is_some_and(|f| f.is_done() && !f.leaving) {
+            self.fly = None;
+        }
 
         if let Some(open) = &mut self.open_animation {
             if open.is_done() {
@@ -550,6 +561,7 @@ impl<W: LayoutElement> Tile<W> {
             || self.wobble.is_some()
             || self.shade_anim.is_some()
             || self.hop_anim.is_some()
+            || self.fly.as_ref().is_some_and(|f| !f.is_done())
     }
 
     /// angel-niri (window_throw.rs): squashes the tile against the edge a throw hit.
@@ -764,7 +776,47 @@ impl<W: LayoutElement> Tile<W> {
             offset.y -= crate::stacking::hop_height(hop.value());
         }
 
+        if let Some(fly) = &self.fly {
+            offset += fly.offset();
+        }
+
         offset
+    }
+
+    /// angel-niri (desk_throw.rs): throws the tile; as in `Fly::new`. Not with the window
+    /// movement animation off.
+    pub fn throw(
+        &mut self,
+        delay: std::time::Duration,
+        leaving: bool,
+        far: bool,
+        y: f64,
+        view_h: f64,
+        spin_right: bool,
+    ) {
+        if self.options.animations.window_movement.0.off {
+            return;
+        }
+        let h = self.animated_tile_size().h;
+        self.hop_anim = None;
+        self.fly = Some(crate::desk_throw::Fly::new(
+            self.clock.clone(),
+            delay,
+            leaving,
+            far,
+            y,
+            h,
+            view_h,
+            spin_right,
+        ));
+    }
+
+    pub fn fly(&self) -> Option<&crate::desk_throw::Fly> {
+        self.fly.as_ref()
+    }
+
+    pub fn stop_fly(&mut self) {
+        self.fly = None;
     }
 
     /// angel-niri (stacking.rs): hops up and back down, starting `delay` from now; not with the
@@ -1713,7 +1765,50 @@ impl<W: LayoutElement> Tile<W> {
         let mut pushed = false;
         self.window().set_offscreen_data(None);
 
-        if let Some(open) = &self.open_animation {
+        let fly_angle = (self.fly.as_ref())
+            .map(|fly| fly.angle())
+            .filter(|angle| *angle != 0.);
+        if let Some(angle) = fly_angle {
+            let mut ctx = ctx.as_gles();
+            let mut elements = Vec::new();
+            self.render_inner(
+                ctx.r(),
+                Point::new(0., 0.),
+                xray_pos,
+                focus_ring,
+                &mut |elem| elements.push(elem),
+            );
+            let has_program = Shaders::get(ctx.renderer)
+                .program(ProgramType::Throw)
+                .is_some();
+            if has_program {
+                match self.deform_offscreen.render(ctx.renderer, scale, &elements) {
+                    Ok((elem, _sync, mut data)) => {
+                        let throw = throw_element(
+                            elem.texture(),
+                            location + elem.offset(),
+                            elem.logical_size(),
+                            angle,
+                            scale,
+                            tile_alpha,
+                        );
+                        data.id = throw.id().clone();
+                        self.window().set_offscreen_data(Some(data));
+                        push(TileRenderElement::Throw(
+                            RelocateRenderElement::from_element(
+                                throw,
+                                Point::default(),
+                                Relocate::Relative,
+                            ),
+                        ));
+                        pushed = true;
+                    }
+                    Err(err) => {
+                        warn!("error rendering tile to offscreen to throw it: {err:?}");
+                    }
+                }
+            }
+        } else if let Some(open) = &self.open_animation {
             let mut ctx = ctx.as_gles();
             let mut elements = Vec::new();
             self.render_inner(
@@ -1959,4 +2054,44 @@ impl<W: LayoutElement> Tile<W> {
         assert_abs_diff_eq!(size.w, rounded.w, epsilon = 1e-5);
         assert_abs_diff_eq!(size.h, rounded.h, epsilon = 1e-5);
     }
+}
+
+/// angel-niri (desk_throw.rs): the tile's offscreen `texture` (at `loc`, `size`) drawn turned by
+/// `angle` in whole pixels of the pixel corners, in a box with room for the turn.
+fn throw_element(
+    texture: &GlesTexture,
+    loc: Point<f64, Logical>,
+    size: Size<f64, Logical>,
+    angle: f64,
+    scale: Scale<f64>,
+    alpha: f32,
+) -> ShaderRenderElement {
+    let room = (size.w.max(size.h) * angle.abs().sin()).ceil() + 8.;
+    let room = Point::from((room, room))
+        .to_physical_precise_round(scale)
+        .to_logical(scale);
+    let area = Rectangle::new(loc - room, size + room.upscale(2.).to_size());
+    let tile_loc = loc - area.loc;
+    let pixel = f64::from(crate::pixel_corners::pixel()).max(2.);
+    ShaderRenderElement::new(
+        ProgramType::Throw,
+        area.size,
+        None,
+        scale.x as f32,
+        alpha,
+        Rc::new([
+            Uniform::new(
+                "throw_tex_size",
+                [texture.width() as f32, texture.height() as f32],
+            ),
+            mat3_uniform("throw_geo_to_tex", glam::Mat3::IDENTITY),
+            Uniform::new("throw_tile_loc", [tile_loc.x as f32, tile_loc.y as f32]),
+            Uniform::new("throw_tile_size", [size.w as f32, size.h as f32]),
+            Uniform::new("throw_angle", angle as f32),
+            Uniform::new("throw_pixel", pixel as f32),
+        ]),
+        HashMap::from([(String::from("niri_tex"), texture.clone())]),
+        Kind::Unspecified,
+    )
+    .with_location(area.loc)
 }

@@ -480,6 +480,9 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                              snapshot {snapshot:?}"
                         );
                     }
+                    Event::DesksThrown { throws } => {
+                        println!("Desks thrown: {throws:?}");
+                    }
                     Event::WindowMenuRequested {
                         id,
                         output,
