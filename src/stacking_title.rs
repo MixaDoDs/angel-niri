@@ -6,7 +6,8 @@
 //! from the left (`--title-buttons right`: minimize, maximize, close up to the right) — and its icon
 //! and title in the middle in the shell's title font, all on the art-pixel grid. The active window's
 //! bar is in the focus ring's active colour, the others' in a dim grey of it; a shell that
-//! recolours the ring recolours them too.
+//! recolours the ring recolours them too. `--button-look keys`: square keys with a dark outline
+//! instead, close on red, the face lighter under the pointer.
 //! Windows that draw their own title bars get none.
 //!
 //! The icon is the shell's: `$XDG_RUNTIME_DIR/angel-niri/title-icons/<app id>.png`, drawn eight
@@ -54,6 +55,7 @@ thread_local! {
     static MAC: Cell<bool> = const { Cell::new(false) };
     static LIGHT_THEME: Cell<bool> = const { Cell::new(false) };
     static RIGHT: Cell<bool> = const { Cell::new(false) };
+    static KEYS: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Whether the buttons sit on the right (`--title-buttons right`), the badges then on the left.
@@ -66,6 +68,15 @@ fn right() -> bool {
 }
 
 /// Whether the pixel bars are for a light theme (`--title-style light`): the inactive ones pale.
+/// `--button-look keys`: the pixel skins' buttons are keys (A), not bare glyphs (D).
+pub fn set_keys(keys: bool) {
+    KEYS.with(|cell| cell.set(keys));
+}
+
+fn keys() -> bool {
+    KEYS.with(Cell::get)
+}
+
 pub fn set_light(light: bool) {
     LIGHT_THEME.with(|cell| cell.set(light));
 }
@@ -247,6 +258,7 @@ struct Look {
     mac: bool,
     light: bool,
     right: bool,
+    keys: bool,
     hover: Option<FramePart>,
     on_top: bool,
     sticky: bool,
@@ -311,6 +323,7 @@ impl TitleBar {
             mac: mac(),
             light: light(),
             right: right(),
+            keys: keys(),
             hover,
             on_top: extras.on_top,
             sticky: extras.sticky,
@@ -392,6 +405,13 @@ const CELL_GLYPHS: [[&str; 7]; 3] = [
     [
         "#######", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#######",
     ],
+];
+
+/// The keys' glyphs (`--button-look keys`), six by six art pixels on the key's face.
+const KEY_GLYPHS: [[&str; 6]; 3] = [
+    ["#....#", ".#..#.", "..##..", "..##..", ".#..#.", "#....#"],
+    ["......", "......", "......", "......", "......", "######"],
+    ["######", "#....#", "#....#", "#....#", "#....#", "######"],
 ];
 
 /// Windows' red under the close button the pointer is over.
@@ -486,6 +506,29 @@ fn draw(
         };
         let x = (button.loc.x / ART).round() * ap;
         let y = (button.loc.y / ART).round() * ap;
+        if !look.mac && look.keys {
+            // a key ten art pixels square in the cell: a dark outline, its face (close red), the
+            // glyph on it; under the pointer the face lighter
+            let hover = look.hover == Some(part);
+            let mut face = if part == FramePart::Close {
+                CLOSE_RED
+            } else {
+                mix(bg, text, 0.22)
+            };
+            if hover {
+                face = mix(face, WHITE, 0.25);
+            }
+            let ink = if part == FramePart::Close {
+                WHITE
+            } else {
+                ink(face)
+            };
+            let (kx, ky) = (x + ap, y + ap);
+            rect(&cr, mix(bg, BLACK, 0.6), kx, ky, 10. * ap, 10. * ap);
+            rect(&cr, face, kx + ap, ky + ap, 8. * ap, 8. * ap);
+            sprite(&cr, ink, kx + 2. * ap, ky + 2. * ap, &KEY_GLYPHS[i]);
+            continue;
+        }
         if !look.mac {
             // a glyph in the text's colour with a shadow away from it; under the pointer a plate,
             // the close button's red

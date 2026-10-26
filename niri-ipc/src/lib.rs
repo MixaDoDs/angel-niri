@@ -470,6 +470,11 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         notch_outputs: Option<String>,
+        /// Look of the pixel title bars' buttons: `glyphs` (× _ □ over a shadow, a plate under
+        /// the pointer) or `keys` (square keys, close red). Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        button_look: Option<String>,
     },
     /// Open pinned programs where they are pinned (angel-niri).
     ///

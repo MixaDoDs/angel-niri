@@ -1022,6 +1022,7 @@ impl State {
                 top_inset,
                 notch,
                 notch_outputs,
+                button_look,
             ) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);
@@ -1032,6 +1033,9 @@ impl State {
                 }
                 if let Some(buttons) = buttons {
                     crate::stacking_title::set_right(buttons == "right");
+                }
+                if let Some(look) = button_look {
+                    crate::stacking_title::set_keys(look == "keys");
                 }
                 if let Some(green) = green {
                     crate::stacking::set_green_fullscreen(green == "fullscreen");

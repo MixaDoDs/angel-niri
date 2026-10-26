@@ -180,6 +180,7 @@ pub enum Action {
         Option<f64>,
         Option<f64>,
         Option<String>,
+        Option<String>,
     ),
     #[knuffel(skip)]
     SetClipboardKeep(bool),
@@ -534,6 +535,7 @@ impl From<niri_ipc::Action> for Action {
                 top_inset,
                 notch,
                 notch_outputs,
+                button_look,
             } => Self::SetStackingMode(
                 on,
                 title_font,
@@ -543,6 +545,7 @@ impl From<niri_ipc::Action> for Action {
                 top_inset,
                 notch,
                 notch_outputs,
+                button_look,
             ),
             niri_ipc::Action::SetClipboardKeep { on } => Self::SetClipboardKeep(on),
             niri_ipc::Action::SetCastPause {
