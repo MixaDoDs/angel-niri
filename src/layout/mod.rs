@@ -235,9 +235,9 @@ pub trait LayoutElement {
     fn max_size(&self) -> Size<i32, Logical>;
     fn is_wl_surface(&self, wl_surface: &WlSurface) -> bool;
     fn has_ssd(&self) -> bool;
-    /// angel-niri (stacking_title.rs): whether the pointer is over its title bar's buttons.
-    fn title_hover(&self) -> bool {
-        false
+    /// angel-niri (stacking_title.rs): the title bar's button the pointer is over.
+    fn title_hover(&self) -> Option<crate::stacking_title::FramePart> {
+        None
     }
     /// angel-niri (desk_flags.rs): rolled up, above the others, on every workspace.
     fn is_shaded(&self) -> bool {

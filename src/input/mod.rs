@@ -2909,7 +2909,7 @@ impl State {
         }
 
         self.niri.handle_focus_follows_mouse(&under);
-        self.stacking_frame_hover();
+        self.stacking_frame_hover(new_pos);
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -3011,7 +3011,7 @@ impl State {
         let under = self.niri.contents_under(pos);
 
         self.niri.handle_focus_follows_mouse(&under);
-        self.stacking_frame_hover();
+        self.stacking_frame_hover(pos);
 
         self.niri.pointer_contents.clone_from(&under);
 

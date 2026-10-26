@@ -1,12 +1,12 @@
 //! angel-niri (stacking.rs): the title bars of windows while stacking.
 //!
 //! A floating window that left its decorations to the compositor (xdg-decoration server side) gets
-//! a pixel title bar: three round buttons like traffic lights — close, minimize, maximize in red,
-//! yellow and green on the left (`--title-buttons right`: minimize, maximize, close on the right),
-//! their glyphs shown while the pointer is over them — and its icon and title in the middle in the
-//! shell's title font, all on the art-pixel grid. The active window's bar is in the focus ring's
-//! active colour with the lights in their own clear colours and a dark pixel outline, the others'
-//! in a dim grey of it with grey lights; a shell that recolours the ring recolours them too.
+//! a pixel title bar: three buttons as Windows 11 draws them — the glyphs × _ □ in the title's colour
+//! over a shadow, a plate under the one the pointer is over (red under ×), close, minimize, maximize
+//! from the left (`--title-buttons right`: minimize, maximize, close up to the right) — and its icon
+//! and title in the middle in the shell's title font, all on the art-pixel grid. The active window's
+//! bar is in the focus ring's active colour, the others' in a dim grey of it; a shell that
+//! recolours the ring recolours them too.
 //! Windows that draw their own title bars get none.
 //!
 //! The icon is the shell's: `$XDG_RUNTIME_DIR/angel-niri/title-icons/<app id>.png`, drawn eight
@@ -137,11 +137,24 @@ fn badges(width: f64, extras: Extras, right: bool) -> Vec<(FramePart, Rectangle<
 /// From one button to the next, in art pixels: three apart, room for their outlines.
 const PITCH: f64 = 9.;
 
-/// The buttons of a bar of `width`, six art pixels round, three apart, four from the edge: close,
-/// minimize, maximize from the left, or minimize, maximize, close up to the right.
-fn buttons(width: f64, right: bool) -> [(FramePart, Rectangle<f64, Logical>); 3] {
+/// A pixel skin's button: the whole bar's height, this many art pixels wide, side by side from the
+/// edge (Windows 11's: the corner closes).
+const CELL: f64 = 12.;
+
+/// The buttons of a bar of `width`: close, minimize, maximize from the left, or minimize, maximize,
+/// close up to the right. The Mac look's are lights six art pixels round, three apart, four from
+/// the edge; the pixel skins' are cells (`CELL`).
+fn buttons(width: f64, right: bool, mac: bool) -> [(FramePart, Rectangle<f64, Logical>); 3] {
     let edge = (width / ART).floor() * ART;
     let rect = |i: f64| {
+        if !mac {
+            let x = if right {
+                edge - CELL * (3. - i) * ART
+            } else {
+                CELL * i * ART
+            };
+            return Rectangle::new(Point::from((x, 0.)), Size::from((CELL * ART, TITLE_HEIGHT)));
+        }
         let x = if right {
             edge - (10. + PITCH * (2. - i)) * ART
         } else {
@@ -200,7 +213,7 @@ pub fn frame_part(
     if y >= TITLE_HEIGHT {
         return None;
     }
-    let part = buttons(w, right())
+    let part = buttons(w, right(), mac())
         .into_iter()
         .chain(badges(w, extras, right()))
         .find(|(_, rect)| rect.contains(pos))
@@ -223,7 +236,7 @@ struct Look {
     mac: bool,
     light: bool,
     right: bool,
-    hover: bool,
+    hover: Option<FramePart>,
     on_top: bool,
     sticky: bool,
     shaded: bool,
@@ -240,7 +253,7 @@ pub struct TitleBar {
 
 impl TitleBar {
     /// The bar of `width` logical px for a window, drawn if its look changed; `color` is the focus
-    /// ring's active colour, `hover` whether the pointer is over its buttons.
+    /// ring's active colour, `hover` the button the pointer is over.
     #[allow(clippy::too_many_arguments)]
     pub fn texture(
         &mut self,
@@ -250,7 +263,7 @@ impl TitleBar {
         width: f64,
         scale: f64,
         active: bool,
-        hover: bool,
+        hover: Option<FramePart>,
         extras: Extras,
         color: Color,
     ) -> Option<TextureBuffer<GlesTexture>> {
@@ -337,38 +350,11 @@ fn ink(bg: [f64; 3]) -> [f64; 3] {
     }
 }
 
-/// `c` moved towards black or white (away from `bg`) until it stands `need` apart from it: a red
-/// light on hell's red bar turns dark red instead of melting into it.
-fn apart(c: [f64; 3], bg: [f64; 3], need: f64) -> [f64; 3] {
-    let toward = if luminance(bg) > 0.18 { BLACK } else { WHITE };
-    let mut t = 0.;
-    let mut out = c;
-    while contrast(out, bg) < need && t < 0.8 {
-        t += 0.05;
-        out = mix(c, toward, t);
-    }
-    out
-}
-
-/// How far a light, or its outline, stands from its bar at least.
-const LIGHT_CONTRAST: f64 = 2.;
-
 const WHITE: [f64; 3] = [1., 1., 1.];
 const BLACK: [f64; 3] = [0., 0., 0.];
 
 /// A round button, six by six art pixels.
 const LIGHT: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
-
-/// The outline around an active window's button, eight by eight art pixels: a light keeps its own
-/// clear colour on any bar, the outline sets it apart.
-const OUTLINE: [&str; 8] = [
-    "...##...", "..#..#..", ".#....#.", "#......#", "#......#", ".#....#.", "..#..#..", "...##...",
-];
-
-/// A light's outline: the light darkened.
-fn outline(c: [f64; 3]) -> [f64; 3] {
-    mix(c, BLACK, 0.55)
-}
 
 /// The glyphs on the buttons while the pointer is over them, four by four art pixels in the
 /// middle of each: close (×), minimize (–), maximize (+), all centred.
@@ -378,15 +364,29 @@ const GLYPHS: [[&str; 4]; 3] = [
     [".##.", "####", "####", ".##."],
 ];
 
+/// The pixel skins' glyphs, seven by seven art pixels in the text's colour over a shadow: minimize
+/// (_), maximize (□), close (×), as Windows 11 draws them.
+const CELL_GLYPHS: [[&str; 7]; 3] = [
+    [
+        "#.....#", ".#...#.", "..#.#..", "...#...", "..#.#..", ".#...#.", "#.....#",
+    ],
+    [
+        ".......", ".......", ".......", ".......", ".......", ".......", "#######",
+    ],
+    [
+        "#######", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#######",
+    ],
+];
+
+/// Windows' red under the close button the pointer is over.
+const CLOSE_RED: [f64; 3] = [0.91, 0.25, 0.22];
+
 /// The badges, six by six art pixels, as the shell's menu draws them (widgets/Icons.js arrowUp,
 /// allDesks): an arrow up (on top), two desks, the front one filled (on every workspace).
 const BADGES: [[&str; 6]; 2] = [
     ["..##..", ".####.", "######", "..##..", "..##..", "..##.."],
     ["..####", "..#..#", "####.#", "######", "####..", "####.."],
 ];
-
-/// Red, yellow and green of the pixel skins, clear on every bar (the outline sets them apart).
-const PIXEL_LIGHTS: [[f64; 3]; 3] = [[0.95, 0.27, 0.23], [1., 0.77, 0.16], [0.27, 0.82, 0.29]];
 
 /// The Mac look's red, yellow and green.
 const MAC_LIGHTS: [[f64; 3]; 3] = [[1., 0.37, 0.34], [1., 0.74, 0.18], [0.16, 0.78, 0.25]];
@@ -403,17 +403,10 @@ fn draw(
     // one art pixel in physical pixels, never blurred over two
     let ap = (ART * scale).round().max(1.);
 
-    // the outline of the active pixel bar's lights
-    let mut ring = false;
-    let (bg, text, lights, line) = if look.mac {
+    let (bg, text, line) = if look.mac {
         let bg = if look.active { [0.91; 3] } else { [0.96; 3] };
         let text = if look.active { [0.15; 3] } else { [0.4; 3] };
-        let lights = if look.active {
-            MAC_LIGHTS
-        } else {
-            [[0.7; 3]; 3]
-        };
-        (bg, text, lights, Some([0.78; 3]))
+        (bg, text, Some([0.78; 3]))
     } else {
         let [r, g, b, _] = color.to_array_unpremul().map(f64::from);
         let accent = [r, g, b];
@@ -425,14 +418,13 @@ fn draw(
         } else {
             mix([lum * 0.5; 3], accent, 0.2)
         };
-        let text = ink(bg);
-        ring = look.active;
-        let lights = if look.active {
-            PIXEL_LIGHTS
-        } else {
-            [apart(mix(bg, WHITE, 0.3), bg, LIGHT_CONTRAST); 3]
-        };
-        (bg, text, lights, None)
+        (bg, ink(bg), None)
+    };
+    // the Mac look's lights
+    let lights = if look.active {
+        MAC_LIGHTS
+    } else {
+        [[0.7; 3]; 3]
     };
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
@@ -469,7 +461,57 @@ fn draw(
         );
     }
 
-    // the top corners cut in steps like a pixel window's (Settings → Windows → Corners)
+    let logical_width = f64::from(width) / scale;
+    for (part, button) in buttons(logical_width, look.right, look.mac) {
+        let i = match part {
+            FramePart::Close => 0,
+            FramePart::Minimize => 1,
+            _ => 2,
+        };
+        let x = (button.loc.x / ART).round() * ap;
+        let y = (button.loc.y / ART).round() * ap;
+        if !look.mac {
+            // a glyph in the text's colour with a shadow away from it; under the pointer a plate,
+            // the close button's red
+            let hover = look.hover == Some(part);
+            let mut ink = text;
+            if hover {
+                let plate = if part == FramePart::Close {
+                    CLOSE_RED
+                } else {
+                    mix(bg, text, 0.2)
+                };
+                rect(&cr, plate, x, 0., CELL * ap, f64::from(height));
+                if part == FramePart::Close {
+                    ink = WHITE;
+                }
+            }
+            let bg = if hover && part == FramePart::Close {
+                CLOSE_RED
+            } else {
+                bg
+            };
+            let shadow = if luminance(ink) > luminance(bg) {
+                mix(bg, BLACK, 0.55)
+            } else {
+                mix(bg, WHITE, 0.6)
+            };
+            // seven art pixels and the shadow's one in the middle of the cell
+            let glyph = &CELL_GLYPHS[i];
+            let (gx, gy) = (x + 2. * ap, y + 2. * ap);
+            sprite(&cr, shadow, gx + ap, gy + ap, glyph);
+            sprite(&cr, ink, gx, gy, glyph);
+            continue;
+        }
+        let (light, glyph) = (&lights[i], GLYPHS[i]);
+        sprite(&cr, *light, x, y, &LIGHT);
+        if look.hover.is_some() {
+            sprite(&cr, mix(*light, ink(*light), 0.75), x + ap, y + ap, &glyph);
+        }
+    }
+
+    // the top corners cut in steps like a pixel window's (Settings → Windows → Corners), over the
+    // buttons' plates
     let corner = f64::from(f32::from_bits(look.corners)) * scale;
     if corner > 0. {
         let step = corner.round().max(1.);
@@ -482,25 +524,6 @@ fn draw(
         }
         let _ = cr.fill();
         cr.set_operator(cairo::Operator::Over);
-    }
-
-    let logical_width = f64::from(width) / scale;
-    for (part, button) in buttons(logical_width, look.right) {
-        let i = match part {
-            FramePart::Close => 0,
-            FramePart::Minimize => 1,
-            _ => 2,
-        };
-        let (light, glyph) = (&lights[i], GLYPHS[i]);
-        let x = (button.loc.x / ART).round() * ap;
-        let y = (button.loc.y / ART).round() * ap;
-        if ring {
-            sprite(&cr, outline(*light), x - ap, y - ap, &OUTLINE);
-        }
-        sprite(&cr, *light, x, y, &LIGHT);
-        if look.hover {
-            sprite(&cr, mix(*light, ink(*light), 0.75), x + ap, y + ap, &glyph);
-        }
     }
 
     let extras = Extras {
@@ -550,7 +573,8 @@ fn draw(
     } else {
         0.
     };
-    let margin = (32. * ap).min(f64::from(width) / 2.);
+    // clear of the buttons: three cells of the pixel skins, the Mac's lights
+    let margin = (38. * ap).min(f64::from(width) / 2.);
     let text_room = (f64::from(width) - 2. * margin - icon_room).max(0.);
     layout.set_width((text_room * f64::from(pangocairo::pango::SCALE)) as i32);
     layout.set_text(&look.title);
@@ -644,36 +668,42 @@ mod tests {
         let at = |x: f64, y: f64| frame_part(Point::from((x, y)), size, extras);
         assert_eq!(at(100., 10.), Some(FramePart::Title));
         assert_eq!(at(100., 100.), None, "the window itself");
-        // close, minimize, maximize from the left: 4 art px in, 6 wide, 3 apart
-        assert_eq!(at(10., 10.), Some(FramePart::Close));
-        assert_eq!(at(28., 10.), Some(FramePart::Minimize));
-        assert_eq!(at(46., 10.), Some(FramePart::Maximize));
+        // close, minimize, maximize from the left: cells 12 art px wide, the bar's height
+        assert_eq!(at(1., 1.), Some(FramePart::Close));
+        assert_eq!(at(30., 22.), Some(FramePart::Minimize));
+        assert_eq!(at(60., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(75., 10.), Some(FramePart::Title));
         assert_eq!(at(390., 10.), Some(FramePart::Title));
         assert_eq!(at(-3., 150.), Some(FramePart::Edge(ResizeEdge::LEFT)));
         assert_eq!(at(200., 303.), Some(FramePart::Edge(ResizeEdge::BOTTOM)));
         assert_eq!(at(-3., 5.), Some(FramePart::Edge(ResizeEdge::TOP_LEFT)));
         assert_eq!(at(-10., 150.), None, "beyond the grab");
 
-        // on the right, like Windows: minimize, maximize, close up to 4 art px from the edge
+        // on the right, like Windows: minimize, maximize, close, the corner closes
         set_right(true);
-        assert_eq!(at(400. - 10., 10.), Some(FramePart::Close));
-        assert_eq!(at(400. - 28., 10.), Some(FramePart::Maximize));
-        assert_eq!(at(400. - 46., 10.), Some(FramePart::Minimize));
+        assert_eq!(at(399., 1.), Some(FramePart::Close));
+        assert_eq!(at(400. - 30., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(400. - 60., 10.), Some(FramePart::Minimize));
         assert_eq!(at(10., 10.), Some(FramePart::Title));
         set_right(false);
+
+        // the Mac's lights: 4 art px in, 6 wide, 3 apart
+        set_mac(true);
+        assert_eq!(at(10., 10.), Some(FramePart::Close));
+        assert_eq!(at(28., 10.), Some(FramePart::Minimize));
+        assert_eq!(at(46., 10.), Some(FramePart::Maximize));
+        assert_eq!(at(1., 1.), Some(FramePart::Title));
+        set_mac(false);
     }
 
     #[test]
-    fn lights_stand_apart_from_every_bar() {
-        // hell's circles and heaven's flavours whose accent sits near a light (the design review)
+    fn glyphs_stand_apart_from_every_bar() {
+        // hell's circles and heaven's flavours (the design review): the title and the buttons'
+        // glyphs are in ink()
         for hex in [
             0xe2703f, 0xec7650, 0xec6a5a, 0xcfa64c, 0xa3bd4e, 0xfabd2f, 0x87b0b3, 0x58b8a0,
         ] {
             let bg = [16, 8, 0].map(|s| f64::from((hex >> s) & 0xff) / 255.);
-            for light in PIXEL_LIGHTS {
-                let apart = contrast(light, bg).max(contrast(outline(light), bg));
-                assert!(apart >= LIGHT_CONTRAST, "{hex:06x}");
-            }
             assert!(contrast(ink(bg), bg) >= 4.5, "{hex:06x}");
         }
     }

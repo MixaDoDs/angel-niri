@@ -542,15 +542,16 @@ impl State {
         true
     }
 
-    /// The pointer moved: over a titled window's edge it shows the resize arrow for it.
-    pub fn stacking_frame_hover(&mut self) {
+    /// The pointer moved to `pos` (before the seat knows it): over a titled window's edge it shows
+    /// the resize arrow for it.
+    pub fn stacking_frame_hover(&mut self, pos: Point<f64, Logical>) {
         let pointer = self.niri.seat.get_pointer().unwrap();
         if pointer.is_grabbed() {
             return;
         }
         let under = on()
             .then(|| {
-                let (output, pos) = self.niri.output_under(pointer.current_location())?;
+                let (output, pos) = self.niri.output_under(pos)?;
                 let output = output.clone();
                 self.niri.layout.frame_part_under(&output, pos)
             })
@@ -560,16 +561,20 @@ impl State {
             _ => None,
         };
 
-        // the buttons show their glyphs while the pointer is over any of them
+        // the button under the pointer: the Mac's lights show their glyphs, a pixel cell its plate
         let hovered = match &under {
-            Some((window, FramePart::Close | FramePart::Minimize | FramePart::Maximize)) => {
-                Some(window)
-            }
+            Some((
+                window,
+                part @ (FramePart::Close | FramePart::Minimize | FramePart::Maximize),
+            )) => Some((window, *part)),
             _ => None,
         };
         let mut changed = false;
         for (_, mapped) in self.niri.layout.windows() {
-            changed |= mapped.set_title_hover(hovered == Some(&mapped.window));
+            let part = hovered
+                .filter(|(win, _)| *win == &mapped.window)
+                .map(|(_, part)| part);
+            changed |= mapped.set_title_hover(part);
         }
 
         // resting on the green button opens the size menu, like a Mac's

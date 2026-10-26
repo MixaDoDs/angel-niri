@@ -151,7 +151,7 @@ pub struct Mapped {
     /// the buttons.
     last_title_click: Cell<Option<Duration>>,
     title_button_down: Cell<Option<FramePart>>,
-    title_hover: Cell<bool>,
+    title_hover: Cell<Option<crate::stacking_title::FramePart>>,
 
     /// angel-niri (desk_flags.rs): rolled up into its title bar, above the other windows, on
     /// every workspace of its monitor.
@@ -331,7 +331,7 @@ impl Mapped {
             last_interactive_resize_start: Cell::new(None),
             last_title_click: Cell::new(None),
             title_button_down: Cell::new(None),
-            title_hover: Cell::new(false),
+            title_hover: Cell::new(None),
             shaded: false,
             on_top: false,
             sticky: false,
@@ -566,7 +566,7 @@ impl Mapped {
         self.sticky = on;
     }
 
-    pub fn set_title_hover(&self, hover: bool) -> bool {
+    pub fn set_title_hover(&self, hover: Option<crate::stacking_title::FramePart>) -> bool {
         self.title_hover.replace(hover) != hover
     }
 
@@ -1047,7 +1047,7 @@ impl LayoutElement for Mapped {
         });
     }
 
-    fn title_hover(&self) -> bool {
+    fn title_hover(&self) -> Option<crate::stacking_title::FramePart> {
         self.title_hover.get()
     }
 
