@@ -119,6 +119,8 @@ pub enum Request {
     OverviewState,
     /// Request information about screencasts.
     Casts,
+    /// Request where the pointer is (angel-niri: the shell's angel looks at it).
+    PointerPosition,
 }
 
 /// Reply from niri to client.
@@ -165,6 +167,20 @@ pub enum Response {
     OverviewState(Overview),
     /// Information about screencasts.
     Casts(Vec<Cast>),
+    /// Where the pointer is, if over an output.
+    PointerPosition(Option<PointerPosition>),
+}
+
+/// The pointer's position.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct PointerPosition {
+    /// Name of the output under the pointer.
+    pub output: String,
+    /// Logical position within that output.
+    pub x: f64,
+    /// Logical position within that output.
+    pub y: f64,
 }
 
 /// Overview information.

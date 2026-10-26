@@ -17,8 +17,8 @@ use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, Fu
 use niri_config::OutputName;
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use niri_ipc::{
-    Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
-    Timestamp, WindowLayout, Workspace,
+    Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, PointerPosition, Reply, Request,
+    Response, Timestamp, WindowLayout, Workspace,
 };
 use smithay::desktop::layer_map_for_output;
 use smithay::input::pointer::{
@@ -466,6 +466,22 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let state = ctx.event_stream_state.borrow();
             let casts = state.casts.casts.values().cloned().collect();
             Response::Casts(casts)
+        }
+        Request::PointerPosition => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let niri = &state.niri;
+                let pos = niri.seat.get_pointer().unwrap().current_location();
+                let at = niri.output_under(pos).map(|(output, at)| PointerPosition {
+                    output: output.name(),
+                    x: at.x,
+                    y: at.y,
+                });
+                let _ = tx.send_blocking(at);
+            });
+            let result = rx.recv().await;
+            let at = result.map_err(|_| String::from("error getting the pointer position"))?;
+            Response::PointerPosition(at)
         }
     };
 
