@@ -24,8 +24,8 @@ uniform float tint;
 // LCD panels break: at the hit a jolt tears the picture sideways and splits its colours; then a
 // black blot of leaked crystal with dark veins, running down, a bright ring and a milky patch
 // around it, long lines through the whole screen (one pixel or a band of sub-pixel stripes), and
-// dead pixels of the monitor's own size, flickering, then calm, then healing one by one; the blot
-// pulls back into the hit the way it spread. Laid out on the upright screen in physical pixels.
+// dead pixels of the monitor's own size, flickering, then calm, then healing one by one. Every
+// hit makes every blot bigger; they heal together, pulling back into their hits the way they spread. Laid out on the upright screen in physical pixels.
 uniform vec2 tex_size;
 uniform vec2 g_screen;
 uniform mat3 g_tex_to_screen;
@@ -39,9 +39,8 @@ uniform vec4 g_h4;
 uniform vec4 g_h5;
 uniform float g_step;   // the stutter step: flickering changes with it
 uniform float g_px;     // physical px per logical px
-
-// a hit's damage lasts this long, s (desk_throw.rs LIFE_MS)
-#define LIFE 6.5
+uniform float g_grow;   // every blot this much bigger for the hits so far
+uniform float g_left;   // s until it has all healed: the hits heal together
 #define PI 3.14159265
 
 // no sin(): large pixel coordinates would band
@@ -102,7 +101,7 @@ void jolt(vec4 h, vec2 s, inout float shift, inout float split) {
 
 // how much of a hit's blot there is: it spreads in 0.7 s and pulls back the same way at the end
 float grown(float age) {
-    float x = min(clamp(age / 0.7, 0.0, 1.0), clamp((LIFE - age) / 0.7, 0.0, 1.0));
+    float x = min(clamp(age / 0.7, 0.0, 1.0), clamp(g_left / 0.7, 0.0, 1.0));
     return 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x);
 }
 
@@ -113,7 +112,9 @@ void damage(vec4 h, vec2 s, inout vec3 col) {
     vec2 c = h.xy;
     float seed = h.w;
     float size = grown(age);
-    float R = g_px * (95.0 + 80.0 * hash(vec2(seed, 1.3)));
+    // its whole life: from its hit until all of it heals
+    float life = age + g_left;
+    float R = g_px * (95.0 + 80.0 * hash(vec2(seed, 1.3))) * g_grow;
     vec2 d = s - c;
     float dist = length(d);
     // away from the edge it hit
@@ -123,7 +124,7 @@ void damage(vec4 h, vec2 s, inout vec3 col) {
     vec2 p = floor(s);
     float dens = 0.0004 + 0.02 * clamp(1.0 - dist / (R * 3.5), 0.0, 1.0);
     if (hash(p + seed * 17.13) < dens) {
-        float heal = LIFE * (0.3 + 0.65 * hash(p + seed * 3.71));
+        float heal = life * (0.3 + 0.65 * hash(p + seed * 3.71));
         if (age < heal && (age > 2.2 || hash(p + vec2(g_step, seed)) > 0.45))
             col = pixInk(hash(p + seed * 9.2));
     }
@@ -138,7 +139,7 @@ void damage(vec4 h, vec2 s, inout vec3 col) {
     for (int i = 0; i < 9; i++) {
         float fi = float(i);
         float born = 0.03 + 0.3 * hash(vec2(seed, fi + 30.0));
-        float gone = LIFE * (0.35 + 0.55 * hash(vec2(seed, fi + 50.0)));
+        float gone = life * (0.35 + 0.55 * hash(vec2(seed, fi + 50.0)));
         if (age < born || age > gone)
             continue;
         if (age < 1.8 && hash(vec2(g_step, fi + seed)) < 0.3)

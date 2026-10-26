@@ -456,6 +456,8 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 Uniform::new("g_h5", spot(5)),
                 Uniform::new("g_step", glitch.step),
                 Uniform::new("g_px", self.scale),
+                Uniform::new("g_grow", glitch.grow),
+                Uniform::new("g_left", glitch.left),
             ];
             return frame.render_texture_from_to(
                 texture,

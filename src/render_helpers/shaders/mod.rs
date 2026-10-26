@@ -214,6 +214,8 @@ impl Shaders {
                     UniformName::new("g_h5", UniformType::_4f),
                     UniformName::new("g_step", UniformType::_1f),
                     UniformName::new("g_px", UniformType::_1f),
+                    UniformName::new("g_grow", UniformType::_1f),
+                    UniformName::new("g_left", UniformType::_1f),
                 ],
             )
             .map_err(|err| {

@@ -39,7 +39,7 @@ struct Glitch {
     seed: f64,
 }
 
-/// How long a hit's damage lasts, healing at the end (shaders/glitch.frag `LIFE`).
+/// How long the damage lasts after the last hit, healing at the end (all hits together).
 const LIFE_MS: f64 = 6500.;
 /// At most this many hits' damage on one output at once (shaders/glitch.frag `g_h0…`).
 pub const SPOTS: usize = 6;
@@ -52,9 +52,20 @@ const STEP_MS: f64 = 70.;
 pub struct GlitchFrame {
     pub spots: [[f32; 4]; SPOTS],
     pub step: f32,
+    /// How much bigger every blot is for the hits so far (1 with one).
+    pub grow: f32,
+    /// Until all of it has healed, s: the hits heal together, after the last one.
+    pub left: f32,
 }
 
-/// A hit on `output` at `pos`, `delay` after `now`: it adds its damage to whatever is there.
+/// Each hit after the first makes every blot this much bigger, growing over `GROW_MS`.
+const GROW_PER_HIT: f64 = 0.45;
+const GROW_MS: f64 = 500.;
+/// Past this many hits after the first it grows no more: the screen stays a screen.
+const GROW_HITS: f64 = 4.;
+
+/// A hit on `output` at `pos`, `delay` after `now`: it adds its damage to whatever is there and
+/// makes it all bigger.
 pub fn glitch(output: &str, pos: [f64; 2], now: Duration, delay: Duration) {
     GLITCHES.with_borrow_mut(|all| {
         let start = now + delay;
@@ -74,11 +85,24 @@ pub fn glitch(output: &str, pos: [f64; 2], now: Duration, delay: Duration) {
     });
 }
 
+/// When the damage on `output` has healed: `LIFE_MS` after its last hit.
+fn healed_at(all: &[Glitch], output: &str) -> Option<Duration> {
+    let last = (all.iter().filter(|g| g.output == output))
+        .map(|g| g.start)
+        .max()?;
+    Some(last + Duration::from_secs_f64(LIFE_MS / 1000.))
+}
+
 /// Whether `output` has damage coming or showing: it keeps redrawing.
 pub fn glitching(output: &str, now: Duration) -> bool {
     GLITCHES.with_borrow_mut(|all| {
-        let life = Duration::from_secs_f64(LIFE_MS / 1000.);
-        all.retain(|g| now < g.start + life);
+        let ends: Vec<_> = all.iter().map(|g| healed_at(all, &g.output)).collect();
+        let mut i = 0;
+        all.retain(|_| {
+            let keep = ends[i].is_some_and(|end| now < end);
+            i += 1;
+            keep
+        });
         all.iter().any(|g| g.output == output)
     })
 }
@@ -86,19 +110,28 @@ pub fn glitching(output: &str, now: Duration) -> bool {
 /// The damage to draw on `output` now, if any.
 pub fn glitch_at(output: &str, now: Duration) -> Option<GlitchFrame> {
     GLITCHES.with_borrow(|all| {
+        let end = healed_at(all, output)?;
+        if now >= end {
+            return None;
+        }
         let mut spots = [[0., 0., -1., 0.]; SPOTS];
-        let mut any = false;
+        let mut hits = 0.;
         let mine = all.iter().filter(|g| g.output == output && g.start <= now);
         for (spot, g) in spots.iter_mut().zip(mine) {
             let age = (now - g.start).as_secs_f64();
-            if age * 1000. >= LIFE_MS {
-                continue;
-            }
             *spot = [g.pos[0] as f32, g.pos[1] as f32, age as f32, g.seed as f32];
-            any = true;
+            hits += (age * 1000. / GROW_MS).min(1.);
+        }
+        if hits <= 0. {
+            return None;
         }
         let step = (now.as_secs_f64() * 1000. / STEP_MS).floor() as f32;
-        any.then_some(GlitchFrame { spots, step })
+        Some(GlitchFrame {
+            spots,
+            step,
+            grow: (1. + GROW_PER_HIT * (hits - 1.).clamp(0., GROW_HITS)) as f32,
+            left: (end - now).as_secs_f32(),
+        })
     })
 }
 
@@ -397,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn every_hit_adds_its_damage_and_heals() {
+    fn every_hit_makes_it_bigger_and_all_heals_together() {
         glitch("A", [100., 0.], Duration::ZERO, Duration::from_millis(100));
         glitch("A", [500., 0.], Duration::ZERO, Duration::from_millis(500));
         assert_eq!(
@@ -405,9 +438,18 @@ mod tests {
             None,
             "before the hit"
         );
-        let f = glitch_at("A", Duration::from_millis(600)).unwrap();
-        let live: Vec<_> = f.spots.iter().filter(|s| s[2] >= 0.).collect();
-        assert_eq!(live.len(), 2);
+        let one = glitch_at("A", Duration::from_millis(400)).unwrap();
+        assert_eq!(one.grow, 1.);
+        let two = glitch_at("A", Duration::from_millis(1100)).unwrap();
+        assert_eq!(two.spots.iter().filter(|s| s[2] >= 0.).count(), 2);
+        assert!(
+            (two.grow - (1. + GROW_PER_HIT as f32)).abs() < 1e-5,
+            "{}",
+            two.grow
+        );
+        // the first heals with the last, not on its own
+        let late = Duration::from_millis(100 + LIFE_MS as u64 + 100);
+        assert!(glitch_at("A", late).is_some_and(|f| f.spots[0][2] > 0.));
         let end = Duration::from_millis(500 + LIFE_MS as u64 + 10);
         assert!(!glitching("A", end));
         assert_eq!(glitch_at("A", end), None);
