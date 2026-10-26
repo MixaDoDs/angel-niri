@@ -21,6 +21,9 @@ use crate::render_helpers::renderer::AsGlesFrame as _;
 use crate::render_helpers::shaders::{mat3_uniform, Shaders};
 use crate::utils::region::TransformedRegion;
 
+/// angel-niri (desk_throw.rs): the captured frame's rows run bottom up.
+const GLITCH_FLIP_Y: bool = true;
+
 #[derive(Debug)]
 pub struct FramebufferEffect {
     id: Id,
@@ -39,6 +42,8 @@ pub struct FramebufferEffectElement {
     blur_options: Option<BlurOptions>,
     noise: f32,
     saturation: f32,
+    /// angel-niri (desk_throw.rs): drawn broken instead (shaders/glitch.frag).
+    glitch: Option<crate::desk_throw::GlitchFrame>,
 }
 
 #[derive(Debug)]
@@ -90,6 +95,31 @@ impl FramebufferEffect {
             blur_options,
             noise,
             saturation,
+            glitch: None,
+        }
+    }
+
+    /// angel-niri (desk_throw.rs): the frame under `geometry` (a whole output, logical), broken
+    /// as `glitch` says; damaged every time, it changes every frame.
+    pub fn render_glitch(
+        &mut self,
+        geometry: Rectangle<f64, Logical>,
+        scale: f64,
+        glitch: crate::desk_throw::GlitchFrame,
+    ) -> FramebufferEffectElement {
+        self.commit.increment();
+        FramebufferEffectElement {
+            id: self.id.clone(),
+            commit: self.commit,
+            geometry,
+            clip_geo: geometry,
+            corner_radius: CornerRadius::default(),
+            subregion: None,
+            scale: scale as f32,
+            blur_options: None,
+            noise: 0.,
+            saturation: 1.,
+            glitch: Some(glitch),
         }
     }
 }
@@ -397,6 +427,43 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             src_loc + clamp_offset.to_f64().upscale(dst_to_src).to_logical(1.),
             clamped_dst.size.to_f64().upscale(dst_to_src).to_logical(1.),
         );
+
+        if let Some(glitch) = self.glitch {
+            let program = Shaders::get_from_frame(frame).glitch.clone();
+            let size = texture.size();
+            let (w, h) = (f64::from(size.w), f64::from(size.h));
+            // logical → the captured texture's texels (it is the whole output)
+            let sx = w / self.geometry.size.w.max(1.);
+            let x = glitch.pos[0] * sx;
+            let y = glitch.pos[1] * sx;
+            let y = if GLITCH_FLIP_Y { h - y } else { y };
+            let cell = (f64::from(crate::pixel_corners::pixel()).max(2.) * f64::from(self.scale))
+                .round()
+                .max(2.);
+            let uniforms = [
+                Uniform::new("tex_size", [w as f32, h as f32]),
+                Uniform::new("g_center", [x as f32, y as f32]),
+                Uniform::new("g_reach", (glitch.reach * w) as f32),
+                Uniform::new("g_power", glitch.power as f32),
+                Uniform::new("g_step", glitch.step as f32),
+                Uniform::new("g_cell", cell as f32),
+            ];
+            return frame.render_texture_from_to(
+                texture,
+                Rectangle::from_size(texture.size().to_f64()),
+                clamped_dst,
+                damage,
+                &[],
+                frame.transformation().invert(),
+                1.,
+                program.as_ref(),
+                if program.is_some() {
+                    &uniforms[..]
+                } else {
+                    &[]
+                },
+            );
+        }
 
         let program = Shaders::get_from_frame(frame).postprocess_and_clip.clone();
         let uniforms = program

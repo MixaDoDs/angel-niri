@@ -22,6 +22,8 @@ pub struct Shaders {
     pub resize: Option<ShaderProgram>,
     pub gradient_fade: Option<GlesTexProgram>,
     pub nearest: Option<GlesTexProgram>,
+    /// angel-niri (desk_throw.rs)
+    pub glitch: Option<GlesTexProgram>,
     pub blur: Option<BlurProgram>,
     pub custom_resize: RefCell<Option<ShaderProgram>>,
     pub custom_close: RefCell<Option<ShaderProgram>>,
@@ -196,6 +198,23 @@ impl Shaders {
             })
             .ok();
 
+        let glitch = renderer
+            .compile_custom_texture_shader(
+                include_str!("glitch.frag"),
+                &[
+                    UniformName::new("tex_size", UniformType::_2f),
+                    UniformName::new("g_center", UniformType::_2f),
+                    UniformName::new("g_reach", UniformType::_1f),
+                    UniformName::new("g_power", UniformType::_1f),
+                    UniformName::new("g_step", UniformType::_1f),
+                    UniformName::new("g_cell", UniformType::_1f),
+                ],
+            )
+            .map_err(|err| {
+                warn!("error compiling glitch shader: {err:?}");
+            })
+            .ok();
+
         let blur = BlurProgram::compile(renderer)
             .map_err(|err| {
                 warn!("error compiling blur shaders: {err:?}");
@@ -212,6 +231,7 @@ impl Shaders {
             resize,
             gradient_fade,
             nearest,
+            glitch,
             blur,
             custom_resize: RefCell::new(None),
             custom_close: RefCell::new(None),

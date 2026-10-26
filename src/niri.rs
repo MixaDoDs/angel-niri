@@ -165,6 +165,7 @@ use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
 use crate::render_helpers::blur::BlurOptions;
 use crate::render_helpers::debug::push_opaque_regions;
+use crate::render_helpers::framebuffer_effect::{FramebufferEffect, FramebufferEffectElement};
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
@@ -560,6 +561,8 @@ pub struct OutputState {
     pub lock_surface: Option<LockSurface>,
     pub lock_color_buffer: SolidColorBuffer,
     screen_transition: Option<ScreenTransition>,
+    /// angel-niri (desk_throw.rs): the broken screen drawn over the finished frame.
+    glitch_fx: RefCell<FramebufferEffect>,
     /// Damage tracker used for the debug damage visualization.
     pub debug_damage_tracker: OutputDamageTracker,
     /// angel-niri (game.rs): when the last redraw began, and until when a background output's
@@ -3220,6 +3223,7 @@ impl Niri {
             lock_surface: None,
             lock_color_buffer: SolidColorBuffer::new(size, CLEAR_COLOR_LOCKED),
             screen_transition: None,
+            glitch_fx: RefCell::new(FramebufferEffect::new()),
             debug_damage_tracker: OutputDamageTracker::from_output(&output),
             last_redraw_at: None,
             background_until: None,
@@ -4607,6 +4611,14 @@ impl Niri {
             self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
         }
 
+        // angel-niri (desk_throw.rs): a broken screen over everything but the pointer
+        if let Some(glitch) = crate::desk_throw::glitch_at(&output.name(), self.clock.now()) {
+            let geometry = Rectangle::from_size(output_size(output));
+            let elem =
+                (state.glitch_fx.borrow_mut()).render_glitch(geometry, output_scale.x, glitch);
+            push(elem.into());
+        }
+
         // Next, the screen transition texture.
         {
             if let Some(transition) = &state.screen_transition {
@@ -5019,6 +5031,8 @@ impl Niri {
             state.unfinished_animations_remain |= self.screenshot_ui.are_animations_ongoing();
             state.unfinished_animations_remain |= self.window_mru_ui.are_animations_ongoing();
             state.unfinished_animations_remain |= state.screen_transition.is_some();
+            state.unfinished_animations_remain |=
+                crate::desk_throw::glitching(&output.name(), self.clock.now());
 
             // Also keep redrawing if the current cursor is animated.
             state.unfinished_animations_remain |= self
@@ -7461,5 +7475,7 @@ niri_render_elements! {
         Texture = PrimaryGpuTextureRenderElement,
         // Used for the CPU-rendered panels.
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
+        // angel-niri (desk_throw.rs): the broken screen.
+        Glitch = FramebufferEffectElement,
     }
 }

@@ -6,10 +6,14 @@
 //!   straightens and drops into its place.
 //! - Ending, the gathered windows still on desk 1 drop off the bottom one after another before
 //!   they go back to their desks; the far ones punch through it.
-//! Each throw's impact goes to the shell (`Event::DesksThrown`): it draws the broken screen.
+//! Where a far one hits, the screen breaks like a cyberpunk implant glitching: the picture itself
+//! tears into shifted bands, splits its colours, goes to pixels and flickering broken blocks, from
+//! the impact out, holds a while, then pulls back into it the way it came (`glitch_at`,
+//! shaders/glitch.frag over the finished frame — in screen casts too). The impacts also go to the
+//! shell (`Event::DesksThrown`).
 //! In flight a window is drawn turned in whole pixels of the pixel corners (shaders/throw.frag).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
 use niri_ipc::Event;
@@ -22,6 +26,106 @@ use crate::niri::State;
 // per thread, as stacking.rs: tests run side by side
 thread_local! {
     static ON: Cell<bool> = const { Cell::new(false) };
+    static GLITCHES: RefCell<Vec<Glitch>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A broken screen: on `output` around `pos` (logical, the edge hit), from `start` (the clock's).
+#[derive(Debug, Clone)]
+struct Glitch {
+    output: String,
+    pos: [f64; 2],
+    start: Duration,
+}
+
+/// Spreading out of the impact and pulling back into it, the same way; holding in between.
+const SPREAD_MS: f64 = 650.;
+const HOLD_MS: f64 = 3400.;
+/// A new picture of the glitch this often: it stutters, it doesn't flow.
+const STEP_MS: f64 = 70.;
+
+/// One frame of a broken screen: where (logical, on its output), how far it reaches (a share of
+/// the output's width), how hard, and which stutter step it is on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlitchFrame {
+    pub pos: [f64; 2],
+    pub reach: f64,
+    pub power: f64,
+    pub step: f64,
+}
+
+/// The screen breaks on `output` at `pos` `delay` after `now`. One already broken there goes on
+/// from the new spot, at full size.
+pub fn glitch(output: &str, pos: [f64; 2], now: Duration, delay: Duration) {
+    GLITCHES.with_borrow_mut(|all| {
+        let start = now + delay;
+        if let Some(g) = all.iter_mut().find(|g| g.output == output) {
+            let t = start.saturating_sub(g.start).as_secs_f64() * 1000.;
+            if t < SPREAD_MS + HOLD_MS + SPREAD_MS {
+                g.pos = pos;
+                g.start = start.saturating_sub(Duration::from_secs_f64(SPREAD_MS.min(t) / 1000.));
+                return;
+            }
+        }
+        all.retain(|g| g.output != output);
+        all.push(Glitch {
+            output: output.to_owned(),
+            pos,
+            start,
+        });
+    });
+}
+
+/// Whether `output` has a broken screen coming or showing: it keeps redrawing.
+pub fn glitching(output: &str, now: Duration) -> bool {
+    GLITCHES.with_borrow_mut(|all| {
+        let end = Duration::from_secs_f64((SPREAD_MS * 2. + HOLD_MS) / 1000.);
+        all.retain(|g| now < g.start + end);
+        all.iter().any(|g| g.output == output)
+    })
+}
+
+/// The broken screen to draw on `output` now, if any.
+pub fn glitch_at(output: &str, now: Duration) -> Option<GlitchFrame> {
+    GLITCHES.with_borrow(|all| {
+        let g = all.iter().find(|g| g.output == output)?;
+        if now < g.start {
+            return None;
+        }
+        let t = (now - g.start).as_secs_f64() * 1000.;
+        let step = (t / STEP_MS).floor();
+        let rnd = hash(step);
+        // out of the impact, holding (stuttering, a tear now and then, almost healing for a
+        // moment), back into it
+        let (grow, power) = if t < SPREAD_MS {
+            (t / SPREAD_MS, 1.)
+        } else if t < SPREAD_MS + HOLD_MS {
+            let flicker = if rnd < 0.08 {
+                0.25
+            } else if rnd > 0.93 {
+                1.35
+            } else {
+                0.85 + 0.15 * hash(step + 0.5)
+            };
+            (1., flicker)
+        } else if t < SPREAD_MS * 2. + HOLD_MS {
+            (1. - (t - SPREAD_MS - HOLD_MS) / SPREAD_MS, 1.)
+        } else {
+            return None;
+        };
+        // in steps too: the edge jumps outward block by block
+        let grow = (grow * 8.).ceil() / 8.;
+        let reach = 0.42 * (1. - (1. - grow).powi(2)) * power.min(1.2);
+        (reach > 0.).then_some(GlitchFrame {
+            pos: g.pos,
+            reach,
+            power: power.min(1.),
+            step,
+        })
+    })
+}
+
+fn hash(x: f64) -> f64 {
+    ((x * 12.9898).sin() * 43758.5453).rem_euclid(1.)
 }
 
 pub fn on() -> bool {
@@ -58,6 +162,10 @@ impl State {
             self.stacking_decorations();
         }
         let throws = std::mem::take(&mut self.niri.layout.desk_throws);
+        let now = self.niri.clock.now();
+        for hit in throws.iter().filter(|hit| hit.far) {
+            glitch(&hit.output, hit.pos, now, Duration::from_millis(hit.in_ms));
+        }
         if !throws.is_empty() {
             if let Some(server) = &self.niri.ipc_server {
                 server.send_transient_event(Event::DesksThrown { throws });
@@ -289,6 +397,23 @@ mod tests {
         assert_eq!(fly.at(0.).1, 0.);
         assert_eq!(fly.at(1.).1, 816.);
         assert!(fly.hit_in(Duration::ZERO).is_some());
+    }
+
+    #[test]
+    fn the_glitch_spreads_holds_and_pulls_back_the_same_way() {
+        let at = |ms: u64| glitch_at("A", Duration::from_millis(ms)).map(|g| g.reach);
+        glitch("A", [100., 0.], Duration::ZERO, Duration::from_millis(100));
+        assert_eq!(at(50), None, "before the hit");
+        let spread = SPREAD_MS as u64;
+        let back = 100 + spread + HOLD_MS as u64;
+        // the way out and the way back are mirror images
+        for ms in [100, 300, 500] {
+            assert_eq!(at(100 + ms - 100), at(back + spread - (ms - 100)));
+        }
+        assert!(at(100 + spread + 10).is_some_and(|r| r > 0.2));
+        assert_eq!(at(back + spread + 10), None, "still broken");
+        assert!(glitching("A", Duration::from_millis(back)));
+        assert!(!glitching("A", Duration::from_millis(back + spread + 10)));
     }
 
     #[test]
