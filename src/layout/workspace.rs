@@ -120,7 +120,7 @@ pub struct Workspace<W: LayoutElement> {
 
 /// angel-niri (stacking): a column the stacking mode floated, to put back when it ends.
 #[derive(Debug)]
-struct StackedColumn<Id> {
+pub(super) struct StackedColumn<Id> {
     ids: Vec<Id>,
     width: ColumnWidth,
     is_full_width: bool,
@@ -2178,6 +2178,16 @@ impl<W: LayoutElement> Workspace<W> {
             .collect();
         self.animate_moves_from(&from);
         from.into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// angel-niri (stacking.rs): the record of the floated columns goes along with the windows
+    /// the stacking mode gathers onto a monitor's first workspace, and comes back with them.
+    pub(super) fn take_stacked_columns(&mut self) -> Vec<StackedColumn<W::Id>> {
+        std::mem::take(&mut self.stacked_columns)
+    }
+
+    pub(super) fn give_stacked_columns(&mut self, columns: Vec<StackedColumn<W::Id>>) {
+        self.stacked_columns.extend(columns);
     }
 
     /// angel-niri (stacking.rs): puts back the columns `enter_stacking` floated, in their order

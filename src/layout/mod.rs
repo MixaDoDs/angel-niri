@@ -54,7 +54,7 @@ use workspace::{WorkspaceAddWindowTarget, WorkspaceId};
 
 pub use self::monitor::MonitorRenderElement;
 use self::monitor::{Monitor, WorkspaceSwitch};
-use self::workspace::{OutputId, Workspace};
+use self::workspace::{OutputId, StackedColumn, Workspace};
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
 use crate::layout::scrolling::ScrollDirection;
@@ -396,6 +396,9 @@ pub struct Layout<W: LayoutElement> {
     /// angel-niri (stacking.rs): the windows the stacking mode floated, to tile again when it
     /// ends.
     stacked: Vec<W::Id>,
+    /// angel-niri (stacking.rs): the workspaces after a monitor's first whose windows the
+    /// stacking mode gathered onto it, to go back when it ends.
+    desk_gathered: Vec<GatheredDesk<W>>,
     /// angel-niri (stacking.rs): a window just shaken while dragged, and the others on its
     /// workspace.
     shaken: Option<(W::Id, Vec<W::Id>)>,
@@ -566,6 +569,18 @@ struct MinimizedWindow<W: LayoutElement> {
     workspace_id: WorkspaceId,
     /// Its column in the scrolling layout; `None` when it was floating.
     column_idx: Option<usize>,
+}
+
+/// angel-niri (stacking.rs): a workspace whose windows the stacking mode moved onto its monitor's
+/// first one (`into`), with its place and the record of its columns.
+#[derive(Debug)]
+struct GatheredDesk<W: LayoutElement> {
+    output: String,
+    idx: usize,
+    id: WorkspaceId,
+    into: WorkspaceId,
+    windows: Vec<W::Id>,
+    columns: Vec<StackedColumn<W::Id>>,
 }
 
 /// Whether to activate a newly added window.
@@ -789,6 +804,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            desk_gathered: Vec::new(),
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -818,6 +834,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
+            desk_gathered: Vec::new(),
             fullscreen_from: Vec::new(),
             shaken: None,
             dnd: None,
@@ -5460,9 +5477,15 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
+    /// On, every window floats; each monitor's workspaces after the first bring theirs onto it
+    /// (the owner, 26.10: "all onto desk 1, I'll place them myself", each monitor keeping its
+    /// own). Off, they go back to their workspaces and columns.
     pub fn set_stacking(&mut self, on: bool) {
         if crate::stacking::on() == on {
             return;
+        }
+        if !on {
+            self.ungather_desks();
         }
         crate::stacking::set_flag(on);
         // Windows that floated already get or lose their title bars.
@@ -5483,6 +5506,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
             self.stacked = stacked;
+            self.gather_desks();
         } else {
             let stacked = std::mem::take(&mut self.stacked);
             for ws in self.workspaces_mut() {
@@ -5491,6 +5515,123 @@ impl<W: LayoutElement> Layout<W> {
             for min in &mut self.minimized {
                 if stacked.contains(min.removed.tile.window().id()) {
                     min.removed.is_floating = false;
+                }
+            }
+        }
+    }
+
+    fn gather_desks(&mut self) {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        for mon in monitors.iter_mut() {
+            let shown = mon.active_workspace_idx();
+            let focus = mon.workspaces[shown]
+                .active_window()
+                .map(|win| win.id().clone());
+            let into = mon.workspaces[0].id();
+            for idx in 1..mon.workspaces.len() {
+                let ws = &mut mon.workspaces[idx];
+                if ws.name().is_some() {
+                    continue;
+                }
+                // on every workspace or full screen: already in sight where it is
+                let windows: Vec<_> = (ws.tiles().map(Tile::window))
+                    .filter(|win| !win.is_sticky() && !win.pending_sizing_mode().is_fullscreen())
+                    .map(|win| win.id().clone())
+                    .collect();
+                if windows.is_empty() {
+                    continue;
+                }
+                let columns = ws.take_stacked_columns();
+                let tiles: Vec<_> = (windows.iter())
+                    .map(|id| ws.remove_tile(id, Transaction::new()))
+                    .collect();
+                let id = ws.id();
+                for removed in tiles {
+                    mon.workspaces[0].add_tile(
+                        removed.tile,
+                        WorkspaceAddWindowTarget::Auto,
+                        ActivateWindow::No,
+                        removed.width,
+                        removed.is_full_width,
+                        true,
+                        None,
+                    );
+                }
+                self.desk_gathered.push(GatheredDesk {
+                    output: mon.output_name().clone(),
+                    idx,
+                    id,
+                    into,
+                    windows,
+                    columns,
+                });
+            }
+            if shown != 0 {
+                mon.switch_workspace(0);
+            }
+            // the emptied ones go at once (else once the switch ends): one desk, as every entry
+            if mon.workspace_switch.is_none() {
+                mon.clean_up_workspaces();
+            }
+            // the window in front stays in front
+            if let Some(focus) = focus {
+                mon.workspaces[0].activate_window(&focus);
+            }
+        }
+    }
+
+    fn ungather_desks(&mut self) {
+        let mut gathered = std::mem::take(&mut self.desk_gathered);
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        // a workspace gone empty is made again at its index, in order, so the old desks come back
+        // on their numbers and the ones made in Desktop follow them
+        gathered.sort_by_key(|desk| desk.idx);
+        for desk in gathered {
+            let Some(mon) = monitors
+                .iter_mut()
+                .find(|mon| *mon.output_name() == desk.output)
+            else {
+                continue;
+            };
+            let idx = mon.idx_of_ws(desk.id).unwrap_or_else(|| {
+                let idx = desk.idx.min(mon.workspaces.len() - 1);
+                mon.add_workspace_at(idx);
+                idx
+            });
+            let id = mon.workspaces[idx].id();
+            // still where it was gathered: it goes back; taken elsewhere by hand: it stays there
+            if let Some(from) = mon.idx_of_ws(desk.into).filter(|from| *from != idx) {
+                let ws = &mut mon.workspaces[from];
+                let back: Vec<_> = (desk.windows.iter())
+                    .filter(|win| ws.has_window(win))
+                    .collect();
+                let tiles: Vec<_> = (back.into_iter())
+                    .map(|win| ws.remove_tile(win, Transaction::new()))
+                    .collect();
+                for removed in tiles {
+                    mon.workspaces[idx].add_tile(
+                        removed.tile,
+                        WorkspaceAddWindowTarget::Auto,
+                        ActivateWindow::No,
+                        removed.width,
+                        removed.is_full_width,
+                        true,
+                        None,
+                    );
+                }
+            }
+            mon.workspaces[idx].give_stacked_columns(desk.columns);
+            // minimized meanwhile: it comes back onto its own desk too
+            for min in &mut self.minimized {
+                let win = min.removed.tile.window().id();
+                if min.workspace_id == desk.id
+                    || (min.workspace_id == desk.into && desk.windows.contains(win))
+                {
+                    min.workspace_id = id;
                 }
             }
         }
