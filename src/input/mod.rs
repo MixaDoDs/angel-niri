@@ -994,6 +994,9 @@ impl State {
             Action::SetMinimizeFade(on) => {
                 crate::minimize::set_fade(on);
             }
+            Action::SetMinimizeOnCopy(on) => {
+                crate::minimize::set_on_copy(on);
+            }
             Action::SnapshotWindow(id, path) => {
                 self.snapshot_window(id, path.into());
             }
@@ -1031,8 +1034,7 @@ impl State {
                 if !on {
                     self.clear_window_flags();
                 }
-                let remember = &self.niri.remember;
-                self.niri.layout.set_stacking(on, |m| remember.is_pinned(m));
+                self.niri.layout.set_stacking(on);
                 self.stacking_decorations();
                 self.niri.queue_redraw_all();
             }
@@ -1944,7 +1946,16 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::MaximizeColumn => {
-                self.niri.layout.toggle_full_width();
+                // angel-niri (stacking.rs): no columns in Desktop, so the Strip's "maximize"
+                // maximizes the window there
+                let focus = self.niri.layout.focus().map(|m| m.window.clone());
+                match focus {
+                    Some(window) if crate::stacking::on() => {
+                        self.niri.layout.toggle_maximized(&window);
+                        self.niri.queue_redraw_all();
+                    }
+                    _ => self.niri.layout.toggle_full_width(),
+                }
             }
             Action::MaximizeWindowToEdges => {
                 let focus = self.niri.layout.focus().map(|m| m.window.clone());

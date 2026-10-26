@@ -372,6 +372,21 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Let programs minimize themselves right after they copy (angel-niri).
+    ///
+    /// Off, the focused window's own request to be minimized within a second of a new clipboard
+    /// (a password manager minimizing on copy) is ignored; an app's own "minimize" button,
+    /// taskbars, binds and `minimize-window` still minimize.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Let programs minimize themselves right after they copy")
+    )]
+    SetMinimizeOnCopy {
+        /// Let them (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Save how a window looks now to a PNG, quietly (angel-niri).
     ///
     /// For a taskbar's previews: unlike `screenshot-window` nothing goes to the clipboard and no

@@ -10,8 +10,9 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use niri_ipc::Event;
 use smithay::backend::allocator::Fourcc;
@@ -318,4 +319,39 @@ pub fn set_fade(on: bool) {
 
 fn fade() -> bool {
     FADE.load(Ordering::Relaxed)
+}
+
+static ON_COPY: AtomicBool = AtomicBool::new(true);
+static COPIED: Mutex<Option<Instant>> = Mutex::new(None);
+/// How soon after a copy a program's own minimizing counts as "minimize on copy".
+const AFTER_COPY: Duration = Duration::from_secs(1);
+
+/// `set-minimize-on-copy`: whether a program may minimize itself right after it copies.
+pub fn set_on_copy(on: bool) {
+    ON_COPY.store(on, Ordering::Relaxed);
+}
+
+/// A new clipboard was set.
+pub fn copied() {
+    *COPIED.lock().unwrap() = Some(Instant::now());
+}
+
+impl State {
+    /// Whether a program's own request to minimize `window` is followed: not when it is the
+    /// focused one and the clipboard has just changed, with `set-minimize-on-copy --on false`.
+    pub fn self_minimize_allowed(&self, window: &Window) -> bool {
+        if ON_COPY.load(Ordering::Relaxed) {
+            return true;
+        }
+        let focused = self
+            .niri
+            .layout
+            .focus()
+            .is_some_and(|m| &m.window == window);
+        let just_copied = COPIED
+            .lock()
+            .unwrap()
+            .is_some_and(|at| at.elapsed() < AFTER_COPY);
+        !(focused && just_copied)
+    }
 }

@@ -294,6 +294,7 @@ impl SelectionHandler for State {
         _seat: Seat<Self>,
     ) {
         if ty == SelectionTarget::Clipboard {
+            crate::minimize::copied();
             self.clipboard_keep_new(source);
         }
     }

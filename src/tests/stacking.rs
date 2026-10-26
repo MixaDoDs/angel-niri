@@ -48,7 +48,7 @@ fn floating(f: &mut Fixture) -> Vec<Window> {
 }
 
 fn set_stacking(f: &mut Fixture, id: ClientId, on: bool) {
-    f.niri().layout.set_stacking(on, |_| false);
+    f.niri().layout.set_stacking(on);
     f.double_roundtrip(id);
 }
 
@@ -322,54 +322,38 @@ fn stacking_fullscreen_gets_its_own_workspace() {
     assert_eq!(floating(&mut f).len(), 2, "not floating again");
 }
 
-// on, the windows of the second workspace are minimized and the monitor shows its first; off,
-// they are back in their columns on the second workspace
+// on and off, the windows of the second workspace stay there and the monitor stays on it, as
+// Windows keeps its desktops
 #[test]
-fn stacking_gathers_on_the_first_workspace() {
+fn stacking_keeps_every_workspace() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let a = open(&mut f, id, 100, 100);
     let b = open(&mut f, id, 100, 100);
-    let c = open(&mut f, id, 100, 100);
     f.niri()
         .layout
         .move_to_workspace(Some(&b), 1, ActivateWindow::No);
-    f.niri()
-        .layout
-        .move_to_workspace(Some(&c), 1, ActivateWindow::No);
     f.niri().layout.switch_workspace(1);
     f.double_roundtrip(id);
 
-    set_stacking(&mut f, id, true);
-    let layout = &f.niri().layout;
-    assert!(
-        layout.is_minimized(&b) && layout.is_minimized(&c),
-        "not minimized"
-    );
-    assert!(!layout.is_minimized(&a));
-    let mon = layout.monitors().next().unwrap();
-    assert_eq!(mon.active_workspace_idx(), 0, "not on the first workspace");
-
-    set_stacking(&mut f, id, false);
-    let layout = &f.niri().layout;
-    assert!(!layout.is_minimized(&b) && !layout.is_minimized(&c));
-    let on = |win: &Window| {
-        (layout.workspaces())
+    let on = |f: &mut Fixture, win: &Window| {
+        let layout = &f.niri().layout;
+        let idx = (layout.workspaces())
             .find(|(_, _, ws)| ws.has_window(win))
-            .map(|(_, idx, _)| idx)
+            .map(|(_, idx, _)| idx);
+        let active = layout.monitors().next().unwrap().active_workspace_idx();
+        (idx, active, layout.is_minimized(win))
     };
-    assert_eq!((on(&a), on(&b), on(&c)), (Some(0), Some(1), Some(1)));
-    f.niri().layout.switch_workspace(1);
-    assert_eq!(
-        columns(&mut f),
-        [vec![b], vec![c]],
-        "not back in its columns"
-    );
+    for stacking in [true, false] {
+        set_stacking(&mut f, id, stacking);
+        assert_eq!(on(&mut f, &a), (Some(0), 1, false), "moved ({stacking})");
+        assert_eq!(on(&mut f, &b), (Some(1), 1, false), "moved ({stacking})");
+    }
 }
 
 // in Desktop the empty workspace at the end is out of reach and hidden; "+" opens it, with a
-// window too; back in the Strip the old workspaces come back on their numbers, the new one after
+// window too; back in the Strip every desk keeps its number
 #[test]
 fn stacking_desks_come_from_plus() {
     let mut f = Fixture::new();
@@ -377,14 +361,10 @@ fn stacking_desks_come_from_plus() {
     let id = f.add_client();
     let a = open(&mut f, id, 100, 100);
     let b = open(&mut f, id, 100, 100);
-    let c = open(&mut f, id, 100, 100);
     let d = open(&mut f, id, 100, 100);
     f.niri()
         .layout
         .move_to_workspace(Some(&b), 1, ActivateWindow::No);
-    f.niri()
-        .layout
-        .move_to_workspace(Some(&c), 2, ActivateWindow::No);
     f.double_roundtrip(id);
 
     set_stacking(&mut f, id, true);
@@ -392,14 +372,14 @@ fn stacking_desks_come_from_plus() {
         let mon = f.niri().layout.monitors().next().unwrap();
         (mon.active_workspace_idx(), mon.last_reachable_workspace())
     };
-    assert_eq!(active(&mut f), (0, 0), "the spare workspace is reachable");
-    f.niri().layout.switch_workspace(3);
+    assert_eq!(active(&mut f), (0, 1), "the spare workspace is reachable");
+    f.niri().layout.switch_workspace(2);
     f.niri()
         .layout
-        .move_to_workspace(Some(&d), 1, ActivateWindow::No);
-    assert_eq!(
-        active(&mut f),
-        (0, 0),
+        .move_to_workspace(Some(&d), 2, ActivateWindow::No);
+    let (idx, last) = active(&mut f);
+    assert!(
+        idx <= 1 && last == 1,
         "switched or moved onto the spare one"
     );
 
@@ -407,7 +387,7 @@ fn stacking_desks_come_from_plus() {
     f.double_roundtrip(id);
     assert_eq!(
         active(&mut f),
-        (1, 1),
+        (2, 2),
         "\"+\" didn't take the window to a new desk"
     );
 
@@ -419,8 +399,8 @@ fn stacking_desks_come_from_plus() {
             .map(|(_, idx, _)| idx)
     };
     assert_eq!(
-        (on(&a), on(&b), on(&c), on(&d)),
-        (Some(0), Some(1), Some(2), Some(3)),
+        (on(&a), on(&b), on(&d)),
+        (Some(0), Some(1), Some(2)),
         "the desks are out of order"
     );
 }

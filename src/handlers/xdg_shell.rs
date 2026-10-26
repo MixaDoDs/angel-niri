@@ -883,7 +883,10 @@ impl XdgShellHandler for State {
             .find_window_and_output(surface.wl_surface())
         {
             let window = mapped.window.clone();
-            self.request_minimize(&window);
+            // angel-niri: `set-minimize-on-copy --on false`
+            if self.self_minimize_allowed(&window) {
+                self.request_minimize(&window);
+            }
         }
     }
 
