@@ -4535,6 +4535,8 @@ impl Niri {
             .monitor_for_output(output)
             .is_some_and(|mon| mon.overview_clamped_progress().is_some());
         crate::pixel_overview::set_filter(ctx.renderer.as_gles_renderer(), overview);
+        // angel-niri (stacking.rs): the title bars find the shell's notch on this output
+        crate::stacking::set_render_output(&output.name(), output_size(output).w);
 
         // Reborrow to shorten lifetime to be able to put in xray.
         let mut ctx = ctx.r();

@@ -259,13 +259,14 @@ impl<W: LayoutElement> Workspace<W> {
             options.clone(),
         );
 
-        let floating = FloatingSpace::new(
+        let mut floating = FloatingSpace::new(
             view_size,
             working_area,
             scale.fractional_scale(),
             clock.clone(),
             options.clone(),
         );
+        floating.set_output_name(Some(output.name()));
 
         let shadow_config =
             compute_workspace_shadow_config(options.overview.workspace_shadow, view_size);
@@ -533,6 +534,8 @@ impl<W: LayoutElement> Workspace<W> {
         }
 
         self.output = output;
+        // angel-niri (stacking.rs): the room under the shell's notch is per output
+        (self.floating).set_output_name(self.output.as_ref().map(|output| output.name()));
 
         if let Some(output) = &self.output {
             if self.original_outputs.is_empty() {

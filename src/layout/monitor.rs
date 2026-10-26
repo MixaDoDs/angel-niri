@@ -1165,7 +1165,17 @@ impl<W: LayoutElement> Monitor<W> {
         let snap = self.insert_hint.as_ref().and_then(|hint| {
             let ws_id = hint.workspace.existing_id()?;
             let ws = &self.workspaces[self.idx_of_ws(ws_id)?];
-            Some((ws_id, hint.snap?.rect(ws.working_area())))
+            // shortcut: the hint does not know the dragged window, so the frame keeps the room
+            // of one without our title bar; pass the window if a titled one's frame must match
+            let (snap, area) = (hint.snap?, ws.working_area());
+            let output = self.output.name();
+            let room = crate::stacking::top_room(
+                Some(&output),
+                self.view_size.w,
+                false,
+                snap.rect(area, 0.),
+            );
+            Some((ws_id, snap.rect(area, room)))
         });
         self.snap_frame.update(
             snap.map(|(_, area)| area),

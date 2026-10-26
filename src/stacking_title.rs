@@ -177,6 +177,17 @@ fn buttons(width: f64, right: bool, mac: bool) -> [(FramePart, Rectangle<f64, Lo
     }
 }
 
+/// The span of x the buttons of a bar of `width` take, from the left of the bar.
+pub fn buttons_span(width: f64) -> (f64, f64) {
+    let rects = buttons(width, right(), mac());
+    let x0 = rects.iter().map(|(_, r)| r.loc.x).fold(f64::MAX, f64::min);
+    let x1 = rects
+        .iter()
+        .map(|(_, r)| r.loc.x + r.size.w)
+        .fold(f64::MIN, f64::max);
+    (x0, x1)
+}
+
 /// Which part of the frame of a titled tile of `size` is at `pos` (relative to the tile, the
 /// title bar on top): its title bar and buttons, or an edge up to `GRAB` px outside. `None` over
 /// the window itself and beyond.
@@ -240,6 +251,8 @@ struct Look {
     on_top: bool,
     sticky: bool,
     shaded: bool,
+    /// The shell's notch over the bar, a span of x in physical px (stacking::notch_over_bar).
+    notch: Option<(i32, i32)>,
 }
 
 /// One window's title bar, drawn once per look.
@@ -253,7 +266,8 @@ pub struct TitleBar {
 
 impl TitleBar {
     /// The bar of `width` logical px for a window, drawn if its look changed; `color` is the focus
-    /// ring's active colour, `hover` the button the pointer is over.
+    /// ring's active colour, `hover` the button the pointer is over, `notch` the span of the bar
+    /// under the shell's notch.
     #[allow(clippy::too_many_arguments)]
     pub fn texture(
         &mut self,
@@ -266,6 +280,7 @@ impl TitleBar {
         hover: Option<FramePart>,
         extras: Extras,
         color: Color,
+        notch: Option<(f64, f64)>,
     ) -> Option<TextureBuffer<GlesTexture>> {
         let icon_path = icon_path(app_id);
         let retry = self
@@ -300,6 +315,7 @@ impl TitleBar {
             on_top: extras.on_top,
             sticky: extras.sticky,
             shaded: !extras.edges,
+            notch: notch.map(|(x0, x1)| ((x0 * scale).round() as i32, (x1 * scale).round() as i32)),
         };
         if self.look.as_ref() != Some(&look) {
             self.buffer = draw(renderer, &look, scale, color, icon_path.filter(|_| icon))
@@ -573,14 +589,25 @@ fn draw(
     } else {
         0.
     };
-    // clear of the buttons: three cells of the pixel skins, the Mac's lights
+    // clear of the buttons: three cells of the pixel skins, the Mac's lights; with the shell's
+    // notch over the middle, in the wider part beside it
     let margin = (38. * ap).min(f64::from(width) / 2.);
-    let text_room = (f64::from(width) - 2. * margin - icon_room).max(0.);
+    let (mut lo, mut hi) = (margin, f64::from(width) - margin);
+    if let Some((x0, x1)) = look.notch {
+        let gap = 4. * ap;
+        let (x0, x1) = (f64::from(x0) - gap, f64::from(x1) + gap);
+        if x0 - lo >= hi - x1 {
+            hi = hi.min(x0);
+        } else {
+            lo = lo.max(x1);
+        }
+    }
+    let text_room = (hi - lo - icon_room).max(0.);
     layout.set_width((text_room * f64::from(pangocairo::pango::SCALE)) as i32);
     layout.set_text(&look.title);
     let (text_width, text_height) = layout.pixel_size();
-    let left = ((f64::from(width) - icon_room - f64::from(text_width)) / 2.)
-        .max(margin)
+    let left = (lo + (hi - lo - icon_room - f64::from(text_width)) / 2.)
+        .max(lo)
         .round();
 
     if let Some(icon) = icon {

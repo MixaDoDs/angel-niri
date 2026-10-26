@@ -458,6 +458,18 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         top_inset: Option<f64>,
+        /// Width of the shell's notch in the middle of the top edge (the Halo), in logical pixels,
+        /// 0 for none: a window with a title bar of ours goes up to the edge, its title bar split
+        /// around the notch, unless its buttons would be under it; the others keep `top-inset`
+        /// clear. Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        notch: Option<f64>,
+        /// The outputs `top-inset` and `notch` are on, comma-separated; empty for every output.
+        /// Kept as it was if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        notch_outputs: Option<String>,
     },
     /// Open pinned programs where they are pinned (angel-niri).
     ///

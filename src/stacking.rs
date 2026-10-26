@@ -83,9 +83,9 @@ pub enum Snap {
 }
 
 impl Snap {
-    /// The part of `area` it fills, below the room kept at the top (`top_inset()`).
-    pub fn rect(self, mut area: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
-        let inset = top_inset().min(area.size.h / 2.);
+    /// The part of `area` it fills, below `inset` kept at the top (`top_room()`).
+    pub fn rect(self, mut area: Rectangle<f64, Logical>, inset: f64) -> Rectangle<f64, Logical> {
+        let inset = inset.min(area.size.h / 2.);
         area.loc.y += inset;
         area.size.h -= inset;
         let mut rect = area;
@@ -289,6 +289,13 @@ thread_local! {
     static GREEN_FULLSCREEN: Cell<bool> = const { Cell::new(false) };
     /// Room kept free at the top of the working area for snapped and maximized windows.
     static TOP_INSET: Cell<f64> = const { Cell::new(0.) };
+    /// The width of the shell's notch (the Halo) in the middle of the top edge, 0 for none: a
+    /// window with our title bar goes up to the edge, its bar split around the notch.
+    static NOTCH: Cell<f64> = const { Cell::new(0.) };
+    /// The outputs the inset and the notch are on; empty for every one.
+    static NOTCH_OUTPUTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The output being drawn and its width (Niri::render), for the title bars' notch.
+    static RENDER_OUTPUT: RefCell<(String, f64)> = const { RefCell::new((String::new(), 0.)) };
     /// The window whose green button the pointer rests on, since when, and whether its size
     /// menu was asked for.
     static GREEN_HOVER: RefCell<Option<(Window, Duration, bool)>> = const { RefCell::new(None) };
@@ -321,6 +328,83 @@ pub fn set_top_inset(inset: f64) {
 
 pub fn top_inset() -> f64 {
     TOP_INSET.with(Cell::get)
+}
+
+/// `--notch`: the shell's notch is this wide (0: none).
+pub fn set_notch(width: f64) {
+    NOTCH.with(|cell| cell.set(width.clamp(0., 4000.)));
+}
+
+/// `--notch-outputs`: the outputs with the inset and the notch, comma-separated (empty: all).
+pub fn set_notch_outputs(names: &str) {
+    let names = names
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    NOTCH_OUTPUTS.with(|cell| *cell.borrow_mut() = names);
+}
+
+fn notch_on(output: Option<&str>) -> bool {
+    NOTCH_OUTPUTS.with(|cell| {
+        let names = cell.borrow();
+        names.is_empty() || output.is_some_and(|name| names.iter().any(|n| n == name))
+    })
+}
+
+/// The notch on `output` as a span of x in a view `view_w` wide, and its height (the inset).
+fn notch(output: Option<&str>, view_w: f64) -> Option<(f64, f64, f64)> {
+    let width = NOTCH.with(Cell::get);
+    let height = top_inset();
+    if width <= 0. || height <= 0. || !notch_on(output) {
+        return None;
+    }
+    let left = (view_w - width) / 2.;
+    Some((left, left + width, height))
+}
+
+/// The room a window at `rect` (in a view `view_w` wide, its top at the working area's)
+/// keeps at the top on `output`: none where the shell keeps nothing; the inset, unless it has our
+/// title bar (`titled`) whose buttons stay clear of the notch: then it goes up to the edge.
+pub fn top_room(
+    output: Option<&str>,
+    view_w: f64,
+    titled: bool,
+    rect: Rectangle<f64, Logical>,
+) -> f64 {
+    if !notch_on(output) {
+        return 0.;
+    }
+    let inset = top_inset().min(rect.size.h / 2.);
+    match notch(output, view_w) {
+        Some((left, right, _)) if titled => {
+            let (x0, x1) = crate::stacking_title::buttons_span(rect.size.w);
+            let (x0, x1) = (rect.loc.x + x0, rect.loc.x + x1);
+            if x1 <= left || x0 >= right {
+                0.
+            } else {
+                inset
+            }
+        }
+        _ => inset,
+    }
+}
+
+/// Niri::render: the output drawn now.
+pub fn set_render_output(name: &str, width: f64) {
+    RENDER_OUTPUT.with(|cell| *cell.borrow_mut() = (name.to_owned(), width));
+}
+
+/// The notch over a title bar at `loc` (on the output drawn now), `width` wide, as a span of x
+/// in the bar; `None` when the bar is clear of it.
+pub fn notch_over_bar(loc: Point<f64, Logical>, width: f64) -> Option<(f64, f64)> {
+    RENDER_OUTPUT.with(|cell| {
+        let (name, view_w) = &*cell.borrow();
+        let (left, right, height) = notch(Some(name), *view_w)?;
+        let (x0, x1) = ((left - loc.x).max(0.), (right - loc.x).min(width));
+        (loc.y < height && x0 < x1).then_some((x0, x1))
+    })
 }
 
 /// How long the pointer rests on the green button before the size menu opens.
@@ -764,13 +848,50 @@ mod tests {
     #[test]
     fn snap_rects() {
         let rect = |snap: Snap| {
-            let r = snap.rect(area());
+            let r = snap.rect(area(), 0.);
             (r.loc.x, r.loc.y, r.size.w, r.size.h)
         };
         assert_eq!(rect(Snap::Maximized), (0., 40., 1920., 1040.));
         assert_eq!(rect(Snap::Left), (0., 40., 960., 1040.));
         assert_eq!(rect(Snap::Right), (960., 40., 960., 1040.));
         assert_eq!(rect(Snap::BottomRight), (960., 560., 960., 520.));
+    }
+
+    #[test]
+    fn room_under_the_notch() {
+        set_top_inset(40.);
+        set_notch(400.);
+        set_notch_outputs("DP-1");
+        let at = |x: f64, w: f64| Rectangle::new(Point::from((x, 0.)), Size::from((w, 600.)));
+        // our title bar, its buttons on the left, clear of the notch (760…1160): up to the edge
+        assert_eq!(top_room(Some("DP-1"), 1920., true, at(0., 1920.)), 0.);
+        // its buttons under the notch: below it
+        assert_eq!(top_room(Some("DP-1"), 1920., true, at(800., 600.)), 40.);
+        // a window drawing its own title bar keeps clear of it
+        assert_eq!(top_room(Some("DP-1"), 1920., false, at(0., 1920.)), 40.);
+        // an output without the notch keeps nothing
+        assert_eq!(top_room(Some("HDMI-A-1"), 1920., false, at(0., 1920.)), 0.);
+
+        set_render_output("DP-1", 1920.);
+        assert_eq!(
+            notch_over_bar(Point::from((700., 0.)), 600.),
+            Some((60., 460.))
+        );
+        assert_eq!(
+            notch_over_bar(Point::from((700., 50.)), 600.),
+            None,
+            "below it"
+        );
+        assert_eq!(
+            notch_over_bar(Point::from((0., 0.)), 700.),
+            None,
+            "beside it"
+        );
+        set_render_output("HDMI-A-1", 1920.);
+        assert_eq!(notch_over_bar(Point::from((700., 0.)), 600.), None);
+        set_notch(0.);
+        set_notch_outputs("");
+        set_top_inset(0.);
     }
 
     #[test]

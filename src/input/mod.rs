@@ -1013,7 +1013,16 @@ impl State {
                 }
                 self.niri.queue_redraw_all();
             }
-            Action::SetStackingMode(on, title_font, title_style, buttons, green, top_inset) => {
+            Action::SetStackingMode(
+                on,
+                title_font,
+                title_style,
+                buttons,
+                green,
+                top_inset,
+                notch,
+                notch_outputs,
+            ) => {
                 if let Some(font) = title_font {
                     crate::stacking_title::set_font(font);
                 }
@@ -1027,8 +1036,16 @@ impl State {
                 if let Some(green) = green {
                     crate::stacking::set_green_fullscreen(green == "fullscreen");
                 }
-                if let Some(inset) = top_inset {
-                    crate::stacking::set_top_inset(inset);
+                if let Some(width) = notch {
+                    crate::stacking::set_notch(width);
+                }
+                if let Some(names) = &notch_outputs {
+                    crate::stacking::set_notch_outputs(names);
+                }
+                if top_inset.is_some() || notch.is_some() || notch_outputs.is_some() {
+                    if let Some(inset) = top_inset {
+                        crate::stacking::set_top_inset(inset);
+                    }
                     self.niri.layout.refresh_snaps();
                 }
                 if !on {

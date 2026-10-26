@@ -70,6 +70,22 @@ pub struct FloatingSpace<W: LayoutElement> {
 
     /// Configurable properties of the layout.
     options: Rc<Options>,
+
+    /// angel-niri (stacking.rs): the output it is on, for the room under the shell's notch.
+    output_name: Option<String>,
+}
+
+/// angel-niri (stacking.rs): the part of `area` a tile snapped to `snap` fills, below the room it
+/// keeps under the shell's notch on `output`.
+fn snap_rect<W: LayoutElement>(
+    output: Option<&str>,
+    view_w: f64,
+    tile: &Tile<W>,
+    snap: Snap,
+    area: Rectangle<f64, Logical>,
+) -> Rectangle<f64, Logical> {
+    let room = crate::stacking::top_room(output, view_w, tile.is_titled(), snap.rect(area, 0.));
+    snap.rect(area, room)
 }
 
 niri_render_elements! {
@@ -233,7 +249,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
             scale,
             clock,
             options,
+            output_name: None,
         }
+    }
+
+    /// angel-niri (stacking.rs): the output it is on now.
+    pub fn set_output_name(&mut self, name: Option<String>) {
+        self.output_name = name;
     }
 
     pub fn update_config(
@@ -248,7 +270,8 @@ impl<W: LayoutElement> FloatingSpace<W> {
             data.update(tile);
             // angel-niri (stacking.rs): a snapped window keeps filling its part.
             if let Some(snap) = data.snap.filter(|_| data.working_area != working_area) {
-                let rect = snap.rect(working_area);
+                let output = self.output_name.as_deref();
+                let rect = snap_rect(output, view_size.w, tile, snap, working_area);
                 request_tile_size(tile, rect.size, false);
                 data.update_config(working_area);
                 data.set_logical_pos(rect.loc);
@@ -568,7 +591,14 @@ impl<W: LayoutElement> FloatingSpace<W> {
                 if data.snap.is_none() {
                     self.data[idx].unsnapped = Some(Rectangle::new(data.logical_pos, data.size));
                 }
-                snap.rect(self.working_area)
+                let output = self.output_name.as_deref();
+                snap_rect(
+                    output,
+                    self.view_size.w,
+                    &self.tiles[idx],
+                    snap,
+                    self.working_area,
+                )
             }
             None => {
                 let Some(mut rect) = data.unsnapped else {
@@ -589,13 +619,26 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     /// angel-niri (stacking.rs): a window let go with its top above the working area (under the
-    /// shell's top bar) comes down to it, as a Mac's windows never go under its menu bar.
+    /// shell's top bar) comes down to it, as a Mac's windows never go under its menu bar; nor does
+    /// it stay under the shell's notch, but for a title bar of ours split around it.
     pub fn keep_below_top(&mut self, id: &W::Id) {
         let Some(idx) = self.idx_of(id) else {
             return;
         };
         let pos = self.data[idx].logical_pos;
-        let top = self.working_area.loc.y;
+        let rect = Rectangle::new(
+            Point::from((pos.x, self.working_area.loc.y)),
+            self.data[idx].size,
+        );
+        let titled = self.tiles[idx].is_titled();
+        let room = (crate::stacking::top_room(
+            self.output_name.as_deref(),
+            self.view_size.w,
+            titled,
+            rect,
+        ))
+        .min(self.working_area.size.h / 2.);
+        let top = self.working_area.loc.y + room;
         if pos.y < top {
             self.move_to(idx, Point::from((pos.x, top)), true);
         }

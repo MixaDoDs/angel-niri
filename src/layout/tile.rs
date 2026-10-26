@@ -1440,6 +1440,7 @@ impl<W: LayoutElement> Tile<W> {
                 self.window.title_hover(),
                 self.title_extras(),
                 color,
+                crate::stacking::notch_over_bar(location, width),
             );
             if let Some(buffer) = buffer {
                 let elem = TextureRenderElement::from_texture_buffer(
