@@ -1,16 +1,17 @@
 //! angel-niri: windows thrown between desks as stacking (the shell's Desktop) starts and ends.
 //! `niri msg action set-desk-throw [--on false]`; off until a shell turns it on.
-//! - Starting, each window gathered from desks 2…N onto desk 1 flies up from below its output,
-//!   one after another, the whole show within a second. From the next desk it lands with a knock
-//!   (a shake); from desks further away it slams into the top of the output, spinning a little,
-//!   straightens and drops into its place.
-//! - Ending, the gathered windows still on desk 1 drop off the bottom one after another before
-//!   they go back to their desks; the far ones punch through it.
-//! Where a far one hits, the screen breaks like a cyberpunk implant glitching: the picture itself
-//! tears into shifted bands, splits its colours, goes to pixels and flickering broken blocks, from
-//! the impact out, holds a while, then pulls back into it the way it came (`glitch_at`,
-//! shaders/glitch.frag over the finished frame — in screen casts too). The impacts also go to the
-//! shell (`Event::DesksThrown`).
+//! - Starting, the windows gathered from desks 2…N onto desk 1 fly up from below its output, each
+//!   from its own side. From the next desk they come quickly and land with a knock (a shake); from
+//!   desks further away they come one by one, well apart, slam into the top of the output turning
+//!   a little, straighten and drop into their places.
+//! - Ending, the gathered windows still on desk 1 drop off the bottom quickly before they go back
+//!   to their desks. No damage then.
+//! Where a far one hits, the monitor breaks — the picture itself, in screen casts too
+//! (shaders/glitch.frag over the finished frame): a jolt tearing it sideways, then a black blot of
+//! leaked liquid crystal with dark veins, long lines across the whole screen, dead pixels of the
+//! monitor's own size flickering; it calms down and heals, the blot pulling back into the impact.
+//! Every hit adds its own (`glitch`, up to `SPOTS` at once). The impacts also go to the shell
+//! (`Event::DesksThrown`).
 //! In flight a window is drawn turned in whole pixels of the pixel corners (shaders/throw.frag).
 
 use std::cell::{Cell, RefCell};
@@ -29,103 +30,76 @@ thread_local! {
     static GLITCHES: RefCell<Vec<Glitch>> = const { RefCell::new(Vec::new()) };
 }
 
-/// A broken screen: on `output` around `pos` (logical, the edge hit), from `start` (the clock's).
+/// A hit's damage: on `output` at `pos` (logical, the edge hit), from `start` (the clock's).
 #[derive(Debug, Clone)]
 struct Glitch {
     output: String,
     pos: [f64; 2],
     start: Duration,
+    seed: f64,
 }
 
-/// Spreading out of the impact and pulling back into it, the same way; holding in between.
-const SPREAD_MS: f64 = 650.;
-const HOLD_MS: f64 = 3400.;
-/// A new picture of the glitch this often: it stutters, it doesn't flow.
+/// How long a hit's damage lasts, healing at the end (shaders/glitch.frag `LIFE`).
+const LIFE_MS: f64 = 6500.;
+/// At most this many hits' damage on one output at once (shaders/glitch.frag `g_h0…`).
+pub const SPOTS: usize = 6;
+/// The damage changes this often: it stutters, it doesn't flow.
 const STEP_MS: f64 = 70.;
 
-/// One frame of a broken screen: where (logical, on its output), how far it reaches (a share of
-/// the output's width), how hard, and which stutter step it is on.
+/// One frame of a broken screen: each hit's damage as (x, y logical, its age in s or -1 for none,
+/// its seed), and the stutter step.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlitchFrame {
-    pub pos: [f64; 2],
-    pub reach: f64,
-    pub power: f64,
-    pub step: f64,
+    pub spots: [[f32; 4]; SPOTS],
+    pub step: f32,
 }
 
-/// The screen breaks on `output` at `pos` `delay` after `now`. One already broken there goes on
-/// from the new spot, at full size.
+/// A hit on `output` at `pos`, `delay` after `now`: it adds its damage to whatever is there.
 pub fn glitch(output: &str, pos: [f64; 2], now: Duration, delay: Duration) {
     GLITCHES.with_borrow_mut(|all| {
         let start = now + delay;
-        if let Some(g) = all.iter_mut().find(|g| g.output == output) {
-            let t = start.saturating_sub(g.start).as_secs_f64() * 1000.;
-            if t < SPREAD_MS + HOLD_MS + SPREAD_MS {
-                g.pos = pos;
-                g.start = start.saturating_sub(Duration::from_secs_f64(SPREAD_MS.min(t) / 1000.));
-                return;
-            }
-        }
-        all.retain(|g| g.output != output);
+        let seed = (start.as_millis() % 9973) as f64 * 0.618;
         all.push(Glitch {
             output: output.to_owned(),
             pos,
             start,
+            seed,
         });
+        // the oldest go first when too many
+        let mine = all.iter().filter(|g| g.output == output).count();
+        if mine > SPOTS {
+            let first = all.iter().position(|g| g.output == output).unwrap();
+            all.remove(first);
+        }
     });
 }
 
-/// Whether `output` has a broken screen coming or showing: it keeps redrawing.
+/// Whether `output` has damage coming or showing: it keeps redrawing.
 pub fn glitching(output: &str, now: Duration) -> bool {
     GLITCHES.with_borrow_mut(|all| {
-        let end = Duration::from_secs_f64((SPREAD_MS * 2. + HOLD_MS) / 1000.);
-        all.retain(|g| now < g.start + end);
+        let life = Duration::from_secs_f64(LIFE_MS / 1000.);
+        all.retain(|g| now < g.start + life);
         all.iter().any(|g| g.output == output)
     })
 }
 
-/// The broken screen to draw on `output` now, if any.
+/// The damage to draw on `output` now, if any.
 pub fn glitch_at(output: &str, now: Duration) -> Option<GlitchFrame> {
     GLITCHES.with_borrow(|all| {
-        let g = all.iter().find(|g| g.output == output)?;
-        if now < g.start {
-            return None;
+        let mut spots = [[0., 0., -1., 0.]; SPOTS];
+        let mut any = false;
+        let mine = all.iter().filter(|g| g.output == output && g.start <= now);
+        for (spot, g) in spots.iter_mut().zip(mine) {
+            let age = (now - g.start).as_secs_f64();
+            if age * 1000. >= LIFE_MS {
+                continue;
+            }
+            *spot = [g.pos[0] as f32, g.pos[1] as f32, age as f32, g.seed as f32];
+            any = true;
         }
-        let t = (now - g.start).as_secs_f64() * 1000.;
-        let step = (t / STEP_MS).floor();
-        let rnd = hash(step);
-        // out of the impact, holding (stuttering, a tear now and then, almost healing for a
-        // moment), back into it
-        let (grow, power) = if t < SPREAD_MS {
-            (t / SPREAD_MS, 1.)
-        } else if t < SPREAD_MS + HOLD_MS {
-            let flicker = if rnd < 0.08 {
-                0.25
-            } else if rnd > 0.93 {
-                1.35
-            } else {
-                0.85 + 0.15 * hash(step + 0.5)
-            };
-            (1., flicker)
-        } else if t < SPREAD_MS * 2. + HOLD_MS {
-            (1. - (t - SPREAD_MS - HOLD_MS) / SPREAD_MS, 1.)
-        } else {
-            return None;
-        };
-        // in steps too: the edge jumps outward block by block
-        let grow = (grow * 8.).ceil() / 8.;
-        let reach = 0.42 * (1. - (1. - grow).powi(2)) * power.min(1.2);
-        (reach > 0.).then_some(GlitchFrame {
-            pos: g.pos,
-            reach,
-            power: power.min(1.),
-            step,
-        })
+        let step = (now.as_secs_f64() * 1000. / STEP_MS).floor() as f32;
+        any.then_some(GlitchFrame { spots, step })
     })
-}
-
-fn hash(x: f64) -> f64 {
-    ((x * 12.9898).sin() * 43758.5453).rem_euclid(1.)
 }
 
 pub fn on() -> bool {
@@ -163,7 +137,7 @@ impl State {
         }
         let throws = std::mem::take(&mut self.niri.layout.desk_throws);
         let now = self.niri.clock.now();
-        for hit in throws.iter().filter(|hit| hit.far) {
+        for hit in throws.iter().filter(|hit| hit.far && !hit.bottom) {
             glitch(&hit.output, hit.pos, now, Duration::from_millis(hit.in_ms));
         }
         if !throws.is_empty() {
@@ -175,16 +149,18 @@ impl State {
     }
 }
 
-/// The whole show, every window on an output, ms.
-const SHOW_MS: u64 = 1000;
 const FAR_MS: u64 = 560;
 const NEAR_MS: u64 = 420;
-/// One window after another, at most this far apart.
-const STEP_MAX_MS: u64 = 110;
+/// Near ones (and all leaving) one after another this far apart; the far ones much further, so
+/// each hit shows on its own and adds to the damage.
+const NEAR_GAP_MS: u64 = 70;
+const FAR_GAP_MS: u64 = 380;
 /// The turn at its widest, radians (about 7°).
 const SPIN: f64 = 0.12;
 /// Into the top edge, the part of the flight going up.
 const UP: f64 = 0.5;
+/// At the hit, the part of its sideways start still left.
+const AT_HIT: f64 = 0.4;
 /// Leaving, the hop up before the drop, logical px.
 const HOP: f64 = 24.;
 /// Below the output, how far past its edge a window starts or ends.
@@ -200,25 +176,24 @@ pub struct Fly {
     below: f64,
     /// Up to the output's top edge (far ones arriving).
     top: f64,
-    /// Down until its bottom edge meets the output's (leaving).
-    edge: f64,
+    /// Sideways, where it comes from (or goes to).
+    side: f64,
     spin: f64,
 }
 
 impl Fly {
     /// A flight starting `delay` from now; `y`, `h`: the window's top and height in its output,
-    /// `view_h`: the output's height.
+    /// `view_h`: the output's height; `side`: from how far left (-) or right (+) it comes.
     pub fn new(
         clock: Clock,
         delay: Duration,
         leaving: bool,
         far: bool,
         y: f64,
-        h: f64,
         view_h: f64,
-        spin_right: bool,
+        side: f64,
     ) -> Self {
-        let ms = if far { FAR_MS } else { NEAR_MS };
+        let ms = if far && !leaving { FAR_MS } else { NEAR_MS };
         let anim = Animation::ease(clock, 0., 1., 0., ms, Curve::Linear).delayed(delay);
         Self {
             anim,
@@ -226,8 +201,9 @@ impl Fly {
             far,
             below: view_h - y + MARGIN,
             top: -y,
-            edge: view_h - (y + h),
-            spin: if spin_right { SPIN } else { -SPIN },
+            side,
+            // it turns the way it travels
+            spin: if side < 0. { SPIN } else { -SPIN },
         }
     }
 
@@ -252,7 +228,7 @@ impl Fly {
             return 0.;
         }
         if self.leaving {
-            return self.spin * t;
+            return -self.spin * t;
         }
         if !self.far {
             return self.spin * 0.6 * (1. - t) * (1. - t);
@@ -271,59 +247,73 @@ impl Fly {
             return (0., 0.);
         }
         if self.leaving {
-            // a hop up, then down past the bottom, faster and faster
+            // a hop up, then down past the bottom and off to its side, faster and faster
             let hop = if t < 0.35 {
                 HOP * (t / 0.35 * std::f64::consts::PI).sin()
             } else {
                 0.
             };
-            return (0., self.below * t.powi(3) - hop);
+            return (self.side * 0.5 * t * t, self.below * t.powi(3) - hop);
         }
         if !self.far {
-            // up into place, a little past it and back, then a knock
-            let y = self.below * (1. - ease_out_back(t));
-            return (shake(t, 0.7, 5.), y);
+            // up into place from its side, a little past it and back, then a knock
+            let e = ease_out_back(t);
+            return (
+                self.side * (1. - e) + shake(t, 0.7, 5.),
+                self.below * (1. - e),
+            );
         }
         if t < UP {
             let s = t / UP;
             // fast, slowing a little near the top: it hits with speed
             let s = s * (1.6 - 0.6 * s);
-            (0., self.below + (self.top - self.below) * s)
+            (
+                self.side * (1. - (1. - AT_HIT) * s),
+                self.below + (self.top - self.below) * s,
+            )
         } else {
             let s = (t - UP) / (1. - UP);
-            (shake(t, UP, 8.), self.top * (1. - ease_out_bounce(s)))
+            let e = ease_out_bounce(s);
+            (
+                self.side * AT_HIT * (1. - e.min(1.)) + shake(t, UP, 8.),
+                self.top * (1. - e),
+            )
         }
     }
 
-    /// When the impact comes, from now: arriving far, it hits the top; leaving far, its bottom
-    /// edge reaches the output's. Near ones have none.
-    pub fn hit_in(&self, now: Duration) -> Option<Duration> {
-        if !self.far {
+    /// When a far one arriving hits the top, from now, and how far sideways from its place.
+    pub fn hit_in(&self, now: Duration) -> Option<(Duration, f64)> {
+        if !self.far || self.leaving {
             return None;
         }
-        let frac = if self.leaving {
-            // the first t where its bottom passes the output's (the drop is monotonic there)
-            let mut t = 0.35;
-            while t < 1. && self.at(t).1 < self.edge {
-                t += 0.005;
-            }
-            t
-        } else {
-            UP
-        };
         let start = self.anim.start_time();
-        Some((start + self.anim.duration().mul_f64(frac)).saturating_sub(now))
+        let at = (start + self.anim.duration().mul_f64(UP)).saturating_sub(now);
+        Some((at, self.side * AT_HIT))
     }
 }
 
-/// For n windows on one output, the delay of the i-th and how long the longest flight lasts.
-pub fn step(n: usize, far: bool) -> Duration {
-    let ms = if far { FAR_MS } else { NEAR_MS };
-    if n <= 1 {
-        return Duration::ZERO;
+/// When each of a row of windows (`far` flags, the near ones first) sets off, from now.
+pub fn delays(far: &[bool], leaving: bool) -> Vec<Duration> {
+    let mut out = Vec::with_capacity(far.len());
+    let mut at = 0;
+    let mut last_far = None;
+    for (i, far) in far.iter().enumerate() {
+        if i > 0 {
+            at += if leaving || !far {
+                NEAR_GAP_MS
+            } else if last_far.is_some() {
+                FAR_GAP_MS
+            } else {
+                // the first far one after the near ones: a breath first
+                NEAR_GAP_MS * 2
+            };
+        }
+        if *far && !leaving {
+            last_far = Some(i);
+        }
+        out.push(Duration::from_millis(at));
     }
-    let room = SHOW_MS.saturating_sub(ms) / (n as u64 - 1);
-    Duration::from_millis(room.clamp(30, STEP_MAX_MS))
+    out
 }
 
 /// The longest any flight takes.
@@ -361,65 +351,72 @@ fn ease_out_bounce(t: f64) -> f64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn flights_start_below_and_end_in_place() {
-        let fly = Fly::new(
+    fn fly(leaving: bool, far: bool) -> Fly {
+        Fly::new(
             Clock::with_time(Duration::ZERO),
             Duration::ZERO,
-            false,
-            true,
+            leaving,
+            far,
             200.,
-            300.,
             1000.,
-            true,
-        );
-        assert_eq!(fly.at(0.).1, 816.);
-        assert_eq!(fly.at(UP).1, -200.);
-        assert_eq!(fly.at(1.), (0., 0.));
+            -150.,
+        )
+    }
 
-        let near = Fly { far: false, ..fly };
+    #[test]
+    fn flights_start_below_from_their_side_and_end_in_place() {
+        let f = fly(false, true);
+        assert_eq!(f.at(0.), (-150., 816.));
+        assert_eq!(f.at(UP).1, -200.);
+        assert_eq!(f.at(1.), (0., 0.));
+        let (_, x) = f.hit_in(Duration::ZERO).unwrap();
+        assert_eq!(x, -60.);
+
+        let near = fly(false, false);
         assert_eq!(near.at(1.), (0., 0.));
         assert!(near.at(0.).1 > 800.);
+        assert!(near.hit_in(Duration::ZERO).is_none());
     }
 
     #[test]
-    fn leaving_ends_below() {
-        let fly = Fly::new(
-            Clock::with_time(Duration::ZERO),
-            Duration::ZERO,
-            true,
-            true,
-            200.,
-            300.,
-            1000.,
-            false,
-        );
-        assert_eq!(fly.at(0.).1, 0.);
-        assert_eq!(fly.at(1.).1, 816.);
-        assert!(fly.hit_in(Duration::ZERO).is_some());
+    fn leaving_ends_below_without_a_hit() {
+        let f = fly(true, true);
+        assert_eq!(f.at(0.), (0., 0.));
+        assert_eq!(f.at(1.).1, 816.);
+        assert!(f.hit_in(Duration::ZERO).is_none());
     }
 
     #[test]
-    fn the_glitch_spreads_holds_and_pulls_back_the_same_way() {
-        let at = |ms: u64| glitch_at("A", Duration::from_millis(ms)).map(|g| g.reach);
+    fn far_ones_come_well_apart_near_ones_quickly() {
+        let d = delays(&[false, false, true, true, true], false);
+        assert_eq!(d[1], Duration::from_millis(NEAR_GAP_MS));
+        assert!(d[3] - d[2] >= Duration::from_millis(300));
+        assert!(d[4] - d[3] >= Duration::from_millis(300));
+        let back = delays(&[false, true, true], true);
+        assert_eq!(back[2], Duration::from_millis(NEAR_GAP_MS * 2));
+    }
+
+    #[test]
+    fn every_hit_adds_its_damage_and_heals() {
         glitch("A", [100., 0.], Duration::ZERO, Duration::from_millis(100));
-        assert_eq!(at(50), None, "before the hit");
-        let spread = SPREAD_MS as u64;
-        let back = 100 + spread + HOLD_MS as u64;
-        // the way out and the way back are mirror images
-        for ms in [100, 300, 500] {
-            assert_eq!(at(100 + ms - 100), at(back + spread - (ms - 100)));
+        glitch("A", [500., 0.], Duration::ZERO, Duration::from_millis(500));
+        assert_eq!(
+            glitch_at("A", Duration::from_millis(50)),
+            None,
+            "before the hit"
+        );
+        let f = glitch_at("A", Duration::from_millis(600)).unwrap();
+        let live: Vec<_> = f.spots.iter().filter(|s| s[2] >= 0.).collect();
+        assert_eq!(live.len(), 2);
+        let end = Duration::from_millis(500 + LIFE_MS as u64 + 10);
+        assert!(!glitching("A", end));
+        assert_eq!(glitch_at("A", end), None);
+        for i in 0..10 {
+            glitch("B", [i as f64, 0.], Duration::ZERO, Duration::ZERO);
         }
-        assert!(at(100 + spread + 10).is_some_and(|r| r > 0.2));
-        assert_eq!(at(back + spread + 10), None, "still broken");
-        assert!(glitching("A", Duration::from_millis(back)));
-        assert!(!glitching("A", Duration::from_millis(back + spread + 10)));
-    }
-
-    #[test]
-    fn the_show_fits_in_a_second() {
-        let n = 8;
-        let last = step(n, true) * (n as u32 - 1) + Duration::from_millis(FAR_MS);
-        assert!(last <= Duration::from_millis(SHOW_MS));
+        assert_eq!(
+            GLITCHES.with_borrow(|all| all.iter().filter(|g| g.output == "B").count()),
+            SPOTS
+        );
     }
 }

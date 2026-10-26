@@ -498,7 +498,7 @@ fn stacking_throws_the_gathered_windows() {
     assert!(crate::stacking::on(), "ended before they flew off");
     assert_eq!(flying(&mut f).len(), 2);
     let throws = std::mem::take(&mut f.niri().layout.desk_throws);
-    assert!(throws.iter().all(|hit| hit.bottom && hit.pos[1] == 1080.));
+    assert!(throws.is_empty(), "leaving breaks nothing");
     assert!(f.niri().layout.throw_out_pending(n));
 
     set_stacking(&mut f, id, false);

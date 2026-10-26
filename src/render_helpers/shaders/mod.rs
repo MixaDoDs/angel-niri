@@ -203,11 +203,17 @@ impl Shaders {
                 include_str!("glitch.frag"),
                 &[
                     UniformName::new("tex_size", UniformType::_2f),
-                    UniformName::new("g_center", UniformType::_2f),
-                    UniformName::new("g_reach", UniformType::_1f),
-                    UniformName::new("g_power", UniformType::_1f),
+                    UniformName::new("g_screen", UniformType::_2f),
+                    UniformName::new("g_tex_to_screen", UniformType::Matrix3x3),
+                    UniformName::new("g_screen_to_tex", UniformType::Matrix3x3),
+                    UniformName::new("g_h0", UniformType::_4f),
+                    UniformName::new("g_h1", UniformType::_4f),
+                    UniformName::new("g_h2", UniformType::_4f),
+                    UniformName::new("g_h3", UniformType::_4f),
+                    UniformName::new("g_h4", UniformType::_4f),
+                    UniformName::new("g_h5", UniformType::_4f),
                     UniformName::new("g_step", UniformType::_1f),
-                    UniformName::new("g_cell", UniformType::_1f),
+                    UniformName::new("g_px", UniformType::_1f),
                 ],
             )
             .map_err(|err| {

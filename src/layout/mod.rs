@@ -87,8 +87,9 @@ pub mod tab_indicator;
 pub mod tile;
 pub mod workspace;
 
-/// angel-niri (desk_throw.rs): throws `thrown` (window, far) on `ws` one after another, arriving
-/// or `leaving`; their impacts.
+/// angel-niri (desk_throw.rs): throws `thrown` (window, far; the near ones first) on `ws` one
+/// after another, arriving or `leaving`, each from its own side; their impacts and when the last
+/// one sets off.
 fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
@@ -96,11 +97,10 @@ fn throw_tiles<W: LayoutElement>(
     view_h: f64,
     now: Duration,
     output: &str,
-) -> Vec<niri_ipc::DeskThrow> {
-    let far = thrown.iter().any(|(_, far)| *far);
-    let step = crate::desk_throw::step(thrown.len(), far);
+) -> (Vec<niri_ipc::DeskThrow>, Duration) {
+    let far: Vec<bool> = thrown.iter().map(|(_, far)| *far).collect();
+    let delays = crate::desk_throw::delays(&far, leaving);
     let mut hits = Vec::new();
-    let mut i = 0;
     for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
         let id = tile.window().id().clone();
         let Some(order) = thrown.iter().position(|(win, _)| *win == id) else {
@@ -108,24 +108,23 @@ fn throw_tiles<W: LayoutElement>(
         };
         let far = thrown[order].1;
         let size = tile.animated_tile_size();
-        tile.throw(step * order as u32, leaving, far, pos.y, view_h, i % 2 == 0);
-        i += 1;
-        let Some(fly) = tile.fly() else {
-            continue;
-        };
-        let Some(hit) = fly.hit_in(now) else {
+        // left and right in turn, further out every other pair
+        let side =
+            (if order % 2 == 0 { -1. } else { 1. }) * (160. + 90. * ((order / 2) % 3) as f64);
+        tile.throw(delays[order], leaving, far, pos.y, view_h, side);
+        let Some((hit, x)) = tile.fly().and_then(|fly| fly.hit_in(now)) else {
             continue;
         };
         hits.push(niri_ipc::DeskThrow {
             output: output.to_owned(),
-            pos: [pos.x + size.w / 2., if leaving { view_h } else { 0. }],
+            pos: [pos.x + size.w / 2. + x, 0.],
             in_ms: hit.as_millis() as u64,
             far,
-            bottom: leaving,
+            bottom: false,
         });
     }
     hits.sort_by_key(|hit| hit.in_ms);
-    hits
+    (hits, delays.last().copied().unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -5637,14 +5636,9 @@ impl<W: LayoutElement> Layout<W> {
                 thrown.sort_by_key(|(_, far)| *far);
                 let output = mon.output_name().clone();
                 let view_h = mon.view_size().h;
-                self.desk_throws.extend(throw_tiles(
-                    &mut mon.workspaces[0],
-                    &thrown,
-                    false,
-                    view_h,
-                    now,
-                    &output,
-                ));
+                let (hits, _) =
+                    throw_tiles(&mut mon.workspaces[0], &thrown, false, view_h, now, &output);
+                self.desk_throws.extend(hits);
             }
             if shown != 0 {
                 mon.switch_workspace(0);
@@ -5693,9 +5687,7 @@ impl<W: LayoutElement> Layout<W> {
             thrown.sort_by_key(|(_, far)| *far);
             let output = mon.output_name().clone();
             let view_h = mon.view_size().h;
-            let n = thrown.len();
-            let far = thrown.iter().any(|(_, far)| *far);
-            let hits = throw_tiles(
+            let (hits, last) = throw_tiles(
                 &mut mon.workspaces[shown],
                 &thrown,
                 true,
@@ -5704,9 +5696,7 @@ impl<W: LayoutElement> Layout<W> {
                 &output,
             );
             self.desk_throws.extend(hits);
-            longest = longest.max(
-                crate::desk_throw::step(n, far) * (n as u32 - 1) + crate::desk_throw::longest(),
-            );
+            longest = longest.max(last + crate::desk_throw::longest());
         }
         if longest.is_zero() {
             return None;

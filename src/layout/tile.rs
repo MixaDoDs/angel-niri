@@ -792,12 +792,11 @@ impl<W: LayoutElement> Tile<W> {
         far: bool,
         y: f64,
         view_h: f64,
-        spin_right: bool,
+        side: f64,
     ) {
         if self.options.animations.window_movement.0.off {
             return;
         }
-        let h = self.animated_tile_size().h;
         self.hop_anim = None;
         self.fly = Some(crate::desk_throw::Fly::new(
             self.clock.clone(),
@@ -805,9 +804,8 @@ impl<W: LayoutElement> Tile<W> {
             leaving,
             far,
             y,
-            h,
             view_h,
-            spin_right,
+            side,
         ));
     }
 

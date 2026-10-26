@@ -21,9 +21,6 @@ use crate::render_helpers::renderer::AsGlesFrame as _;
 use crate::render_helpers::shaders::{mat3_uniform, Shaders};
 use crate::utils::region::TransformedRegion;
 
-/// angel-niri (desk_throw.rs): the captured frame's rows run bottom up.
-const GLITCH_FLIP_Y: bool = true;
-
 #[derive(Debug)]
 pub struct FramebufferEffect {
     id: Id,
@@ -431,22 +428,34 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
         if let Some(glitch) = self.glitch {
             let program = Shaders::get_from_frame(frame).glitch.clone();
             let size = texture.size();
-            let (w, h) = (f64::from(size.w), f64::from(size.h));
-            // logical → the captured texture's texels (it is the whole output)
-            let sx = w / self.geometry.size.w.max(1.);
-            let x = glitch.pos[0] * sx;
-            let y = glitch.pos[1] * sx;
-            let y = if GLITCH_FLIP_Y { h - y } else { y };
-            let cell = (f64::from(crate::pixel_corners::pixel()).max(2.) * f64::from(self.scale))
-                .round()
-                .max(2.);
+            let scale = f64::from(self.scale);
+            // the damage is laid out on the upright screen in physical pixels; the captured
+            // frame's texels are that turned by the output's transform (the winit window's frame
+            // is upside down, a monitor's isn't)
+            let screen = [
+                (self.geometry.size.w * scale) as f32,
+                (self.geometry.size.h * scale) as f32,
+            ];
+            let tex_to_screen = Mat3::from_translation(Vec2::new(0.5, 0.5))
+                * frame.transformation().matrix()
+                * Mat3::from_translation(Vec2::new(-0.5, -0.5));
+            let spot = |i: usize| {
+                let [x, y, age, seed] = glitch.spots[i];
+                [x * self.scale, y * self.scale, age, seed]
+            };
             let uniforms = [
-                Uniform::new("tex_size", [w as f32, h as f32]),
-                Uniform::new("g_center", [x as f32, y as f32]),
-                Uniform::new("g_reach", (glitch.reach * w) as f32),
-                Uniform::new("g_power", glitch.power as f32),
-                Uniform::new("g_step", glitch.step as f32),
-                Uniform::new("g_cell", cell as f32),
+                Uniform::new("tex_size", [size.w as f32, size.h as f32]),
+                Uniform::new("g_screen", screen),
+                mat3_uniform("g_tex_to_screen", tex_to_screen),
+                mat3_uniform("g_screen_to_tex", tex_to_screen.inverse()),
+                Uniform::new("g_h0", spot(0)),
+                Uniform::new("g_h1", spot(1)),
+                Uniform::new("g_h2", spot(2)),
+                Uniform::new("g_h3", spot(3)),
+                Uniform::new("g_h4", spot(4)),
+                Uniform::new("g_h5", spot(5)),
+                Uniform::new("g_step", glitch.step),
+                Uniform::new("g_px", self.scale),
             ];
             return frame.render_texture_from_to(
                 texture,
