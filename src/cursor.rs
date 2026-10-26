@@ -226,15 +226,75 @@ pub enum RenderCursor {
 }
 
 type TextureCache = HashMap<(CursorIcon, i32), Vec<MemoryRenderBuffer>>;
+/// angel-niri (cursor_zoom): the frames scaled up, by icon, scale, frame and zoom in 1/16 steps
+type ZoomedCache = HashMap<(CursorIcon, i32, usize, u32), (MemoryRenderBuffer, f64, f64)>;
 
 #[derive(Default)]
 pub struct CursorTextureCache {
     cache: RefCell<TextureCache>,
+    zoomed: RefCell<ZoomedCache>,
 }
 
 impl CursorTextureCache {
     pub fn clear(&mut self) {
         self.cache.get_mut().clear();
+        self.zoomed.get_mut().clear();
+    }
+
+    /// The frame `zoom` times bigger, by nearest neighbour (pixel cursors stay crisp), and the
+    /// factors it really got across and down (whole pixels). Each zoom step of the growth is a
+    /// texture of its own; they go once the arrow is back to normal (`drop_zoomed`).
+    pub fn get_zoomed(
+        &self,
+        icon: CursorIcon,
+        scale: i32,
+        cursor: &XCursor,
+        idx: usize,
+        zoom: f64,
+    ) -> (MemoryRenderBuffer, f64, f64) {
+        let step = (zoom * 16.).round().max(16.) as u32;
+        let mut zoomed = self.zoomed.borrow_mut();
+        if zoomed.len() > 512 {
+            zoomed.clear();
+        }
+        zoomed
+            .entry((icon, scale, idx, step))
+            .or_insert_with(|| {
+                let zoom = f64::from(step) / 16.;
+                let frame = &cursor.frames()[idx];
+                let (w, h) = (frame.width as usize, frame.height as usize);
+                let nw = ((w as f64 * zoom).round() as usize).max(1);
+                let nh = ((h as f64 * zoom).round() as usize).max(1);
+                let mut px = vec![0u8; nw * nh * 4];
+                for y in 0..nh {
+                    let sy = ((y as f64 + 0.5) * h as f64 / nh as f64) as usize;
+                    let sy = sy.min(h - 1);
+                    for x in 0..nw {
+                        let sx = ((x as f64 + 0.5) * w as f64 / nw as f64) as usize;
+                        let sx = sx.min(w - 1);
+                        let s = (sy * w + sx) * 4;
+                        let d = (y * nw + x) * 4;
+                        px[d..d + 4].copy_from_slice(&frame.pixels_rgba[s..s + 4]);
+                    }
+                }
+                let buf = MemoryRenderBuffer::from_slice(
+                    &px,
+                    Fourcc::Argb8888,
+                    (nw as i32, nh as i32),
+                    scale,
+                    Transform::Normal,
+                    None,
+                );
+                (buf, nw as f64 / w as f64, nh as f64 / h as f64)
+            })
+            .clone()
+    }
+
+    pub fn drop_zoomed(&self) {
+        let mut zoomed = self.zoomed.borrow_mut();
+        if !zoomed.is_empty() {
+            zoomed.clear();
+        }
     }
 
     pub fn get(

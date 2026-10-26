@@ -322,6 +322,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetPixelShadow(f64),
     #[knuffel(skip)]
+    SetCursorZoom(f64, u32),
+    #[knuffel(skip)]
     /// strength, bounce, squash, wobble
     SetWindowThrow(f64, f64, f64, f64),
     #[knuffel(skip)]
@@ -687,6 +689,7 @@ impl From<niri_ipc::Action> for Action {
                 Self::SetPixelCorners(pixel, steps)
             }
             niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
+            niri_ipc::Action::SetCursorZoom { zoom, ms } => Self::SetCursorZoom(zoom, ms),
             niri_ipc::Action::SetWindowThrow {
                 strength,
                 bounce,

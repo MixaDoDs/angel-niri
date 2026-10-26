@@ -640,6 +640,20 @@ pub enum Action {
         #[serde(default = "default_pixel_steps")]
         steps: u32,
     },
+    /// Draw the pointer bigger for a moment (angel-niri).
+    ///
+    /// The arrow grows to `zoom` times its size (1 = back to normal) over `ms` milliseconds,
+    /// scaled by nearest neighbour; the pointer keeps working as usual meanwhile.
+    #[cfg_attr(feature = "clap", clap(about = "Draw the pointer bigger"))]
+    SetCursorZoom {
+        /// How many times bigger, 1 to 8.
+        #[cfg_attr(feature = "clap", arg())]
+        zoom: f64,
+        /// How long the change takes.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 170))]
+        #[serde(default = "default_cursor_zoom_ms")]
+        ms: u32,
+    },
     /// Turn on pixel window shadows (angel-niri).
     ///
     /// Windows get the layout's shadow drawn as dithered dots of `pixel` logical pixels instead
@@ -2653,6 +2667,10 @@ impl OutputAction {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_cursor_zoom_ms() -> u32 {
+    170
 }
 
 fn default_pixel_steps() -> u32 {

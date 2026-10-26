@@ -10,6 +10,7 @@ pub mod cast_pause;
 pub mod cli;
 pub mod clipboard_keep;
 pub mod cursor;
+pub mod cursor_zoom;
 #[cfg(feature = "dbus")]
 pub mod dbus;
 pub mod desk_flags;

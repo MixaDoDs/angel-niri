@@ -4060,9 +4060,24 @@ impl Niri {
 
         // Get the render cursor to draw.
         let cursor_scale = output_scale.integer_scale();
-        let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
+        let mut render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
+
+        // angel-niri: the arrow drawn bigger for a moment (cursor_zoom); a client's own cursor
+        // surface gives way to the theme's arrow meanwhile, so the big arrow stays one picture
+        // over every window
+        let zoom = crate::cursor_zoom::value(self.clock.now());
+        let zoomed = zoom > 1.01;
+        if !zoomed {
+            self.cursor_texture_cache.drop_zoomed();
+        } else if let RenderCursor::Surface { .. } = render_cursor {
+            render_cursor = RenderCursor::Named {
+                icon: CursorIcon::Default,
+                scale: cursor_scale,
+                cursor: self.cursor_manager.get_default_cursor(cursor_scale),
+            };
+        }
 
         match render_cursor {
             RenderCursor::Hidden => (),
@@ -4086,11 +4101,22 @@ impl Niri {
                 cursor,
             } => {
                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
-                let hotspot = XCursor::hotspot(frame).to_logical(scale);
-                let pointer_pos =
-                    (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+                let (texture, fx, fy) = if zoomed {
+                    self.cursor_texture_cache
+                        .get_zoomed(icon, scale, &cursor, idx, zoom)
+                } else {
+                    (
+                        self.cursor_texture_cache.get(icon, scale, &cursor, idx),
+                        1.,
+                        1.,
+                    )
+                };
+                let hot = XCursor::hotspot(frame);
+                let hotspot: Point<f64, Logical> =
+                    Point::<f64, Physical>::from((f64::from(hot.x) * fx, f64::from(hot.y) * fy))
+                        .to_logical(f64::from(scale));
+                let pointer_pos = (pointer_pos - hotspot).to_physical_precise_round(output_scale);
 
-                let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
                 match MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     pointer_pos,
@@ -4998,6 +5024,8 @@ impl Niri {
             state.unfinished_animations_remain |= self
                 .cursor_manager
                 .is_current_cursor_animated(output.current_scale().integer_scale());
+            // …or growing or shrinking (angel-niri cursor_zoom)
+            state.unfinished_animations_remain |= crate::cursor_zoom::animating(self.clock.now());
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {

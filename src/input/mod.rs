@@ -1028,6 +1028,10 @@ impl State {
             Action::SetWindowThrow(strength, bounce, squash, wobble) => {
                 crate::window_throw::set(strength, bounce, squash, wobble);
             }
+            Action::SetCursorZoom(zoom, ms) => {
+                crate::cursor_zoom::set(zoom, ms, self.niri.clock.now());
+                self.niri.queue_redraw_all();
+            }
             Action::SetPixelShadow(pixel) => {
                 crate::pixel_shadow::set(pixel as f32);
                 // the window rules don't change, so their tiles are told directly
