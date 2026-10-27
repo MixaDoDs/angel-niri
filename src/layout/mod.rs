@@ -88,8 +88,8 @@ pub mod tile;
 pub mod workspace;
 
 /// angel-niri (desk_throw.rs): throws `thrown` (window, far; the near ones first) on `ws` one
-/// after another, arriving or `leaving`, each from its own side; their impacts and when the last
-/// one sets off.
+/// after another, arriving or `leaving`, each on its own path; their impacts (where and when each
+/// makes its sound) and when the last one sets off.
 fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
@@ -100,6 +100,8 @@ fn throw_tiles<W: LayoutElement>(
 ) -> (Vec<niri_ipc::DeskThrow>, Duration) {
     let far: Vec<bool> = thrown.iter().map(|(_, far)| *far).collect();
     let delays = crate::desk_throw::delays(&far, leaving);
+    // every throw its own: the same apps fly a little differently next time
+    let nonce = crate::utils::get_monotonic_time().as_nanos() as u64;
     let mut hits = Vec::new();
     for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
         let id = tile.window().id().clone();
@@ -108,19 +110,18 @@ fn throw_tiles<W: LayoutElement>(
         };
         let far = thrown[order].1;
         let size = tile.animated_tile_size();
-        // left and right in turn, further out every other pair
-        let side =
-            (if order % 2 == 0 { -1. } else { 1. }) * (160. + 90. * ((order / 2) % 3) as f64);
-        tile.throw(delays[order], leaving, far, pos.y, view_h, side);
-        let Some((hit, x)) = tile.fly().and_then(|fly| fly.hit_in(now)) else {
+        let app = tile.window().app_id().unwrap_or_default();
+        let path = crate::desk_throw::Path::new(&app, order, nonce);
+        tile.throw(delays[order], leaving, far, pos.y, view_h, path);
+        let Some((hit, x)) = tile.fly().map(|fly| fly.hit_in(now)) else {
             continue;
         };
         hits.push(niri_ipc::DeskThrow {
             output: output.to_owned(),
-            pos: [pos.x + size.w / 2. + x, 0.],
+            pos: [pos.x + size.w / 2. + x, if leaving { view_h } else { 0. }],
             in_ms: hit.as_millis() as u64,
             far,
-            bottom: false,
+            bottom: leaving,
         });
     }
     hits.sort_by_key(|hit| hit.in_ms);

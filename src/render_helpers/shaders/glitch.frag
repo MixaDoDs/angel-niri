@@ -21,27 +21,44 @@ uniform float tint;
 #endif
 
 // angel-niri (desk_throw.rs): the finished frame of an output with a broken monitor's damage, as
-// LCD panels break: at the hit a jolt tears the picture sideways and splits its colours; then a
-// black blot of leaked crystal with dark veins, running down, a bright ring and a milky patch
-// around it, long lines through the whole screen (one pixel or a band of sub-pixel stripes), and
-// dead pixels of the monitor's own size, flickering, then calm, then healing one by one. Every
-// hit makes every blot bigger; they heal together, pulling back into their hits the way they spread. Laid out on the upright screen in physical pixels.
+// LCD panels break: at a hit the screen jolts and a tear shifts rows sideways, splitting colours;
+// then black blots of leaked crystal with dark veins, running down, that run together into one
+// as they meet (one field, smoothly joined), the picture around them pushed aside and fringed
+// like a pressed panel, a bright rim, a milky patch; long lines through the whole screen (one
+// pixel or a band of sub-pixel stripes) and dead pixels of the monitor's own size, flickering,
+// then calm; pieces of the window that hit, stuck where the picture froze at the hit, torn
+// sideways, in fewer shades, settling back in steps. The dead pixels and lines heal first, one by one; a couple of seconds later the blots
+// pull back into their hits. Every hit makes every blot bigger; they heal together. Laid out on the
+// upright screen in physical pixels.
 uniform vec2 tex_size;
+// the frames kept at the hits (desk_throw.rs GlitchFrame::snap), the same way round as tex
+uniform sampler2D g_snap;
+uniform float g_snap_on;
 uniform vec2 g_screen;
 uniform mat3 g_tex_to_screen;
 uniform mat3 g_screen_to_tex;
-// each hit: x, y (physical px, the edge it hit), its age in s (< 0: none), its seed
+// each blot: x, y (physical px, the edge it hit), its age in s (< 0: none), its seed
 uniform vec4 g_h0;
 uniform vec4 g_h1;
 uniform vec4 g_h2;
 uniform vec4 g_h3;
 uniform vec4 g_h4;
 uniform vec4 g_h5;
+// how many later hits swelled each blot (g_h0…2, g_h3…5)
+uniform vec3 g_wa;
+uniform vec3 g_wb;
+// the latest hit's age (s, < 0: none) and how far the screen shakes (physical px)
+uniform vec2 g_jolt;
 uniform float g_step;   // the stutter step: flickering changes with it
 uniform float g_px;     // physical px per logical px
 uniform float g_grow;   // every blot this much bigger for the hits so far
 uniform float g_left;   // s until it has all healed: the hits heal together
 #define PI 3.14159265
+// the blots pull back over the last this many s
+#define BLOT_HEAL 1.8
+// the dead pixels and lines are gone this long before the end, healing over the span before
+#define PIX_END 4.3
+#define PIX_SPAN 2.0
 
 // no sin(): large pixel coordinates would band
 float hash(vec2 p) {
@@ -60,6 +77,11 @@ float noise(vec2 p) {
 
 float fbm(vec2 p) {
     return 0.55 * noise(p) + 0.3 * noise(p * 2.07 + 3.1) + 0.15 * noise(p * 4.3 + 7.7);
+}
+
+float smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
 }
 
 // a broken line's colours: white, green, magenta, cyan, black, yellow, red
@@ -82,97 +104,63 @@ vec3 pixInk(float h) {
     return vec3(0.0);
 }
 
+// a pressed panel's fringe, in steps: violet, blue, cyan, green, yellow, red
+vec3 fringeInk(float i) {
+    float h = fract(i / 6.0) * 6.0;
+    if (h < 1.0) return vec3(0.6, 0.2, 1.0);
+    if (h < 2.0) return vec3(0.15, 0.35, 1.0);
+    if (h < 3.0) return vec3(0.0, 0.95, 1.0);
+    if (h < 4.0) return vec3(0.2, 1.0, 0.3);
+    if (h < 5.0) return vec3(1.0, 0.95, 0.1);
+    return vec3(1.0, 0.2, 0.2);
+}
+
 vec2 toTex(vec2 s) {
     return clamp((g_screen_to_tex * vec3(s / g_screen, 1.0)).xy, vec2(0.0), vec2(1.0));
 }
 
-// the jolt of a hit: rows torn sideways, the colours split, gone in 0.45 s
-void jolt(vec4 h, vec2 s, inout float shift, inout float split) {
-    if (h.z < 0.0 || h.z > 0.45)
-        return;
-    float j = 1.0 - h.z / 0.45;
-    j *= j;
-    float rowH = g_px * (3.0 + floor(hash(vec2(floor(s.y / (g_px * 28.0)), g_step + h.w)) * 22.0));
-    float row = floor(s.y / rowH);
-    if (hash(vec2(row, g_step + h.w * 3.0)) < 0.55)
-        shift += (hash(vec2(row, g_step + 7.0 + h.w)) - 0.5) * 2.0 * g_px * 140.0 * j;
-    split += g_px * 9.0 * j;
-}
-
-// how much of a hit's blot there is: it spreads in 0.7 s and pulls back the same way at the end
+// how much of a blot there is: it spreads in 0.7 s and pulls back over the last BLOT_HEAL s
 float grown(float age) {
-    float x = min(clamp(age / 0.7, 0.0, 1.0), clamp(g_left / 0.7, 0.0, 1.0));
+    float x = min(clamp(age / 0.7, 0.0, 1.0), clamp(g_left / BLOT_HEAL, 0.0, 1.0));
     return 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x);
 }
 
-void damage(vec4 h, vec2 s, inout vec3 col) {
-    float age = h.z;
-    if (age < 0.0)
+float radius(vec4 h, float w) {
+    return g_px * (60.0 + 50.0 * hash(vec2(h.w, 1.3))) * g_grow * (1.0 + 0.25 * w);
+}
+
+// away from the edge it hit
+float away(vec4 h) {
+    return h.y < g_screen.y * 0.5 ? 1.0 : -1.0;
+}
+
+// a blot's share of the field: `v` (< 0 inside, all blots joined), which way is out of it, how
+// big the biggest is, and whether `s` is on one of its veins
+void blot(vec4 h, float w, vec2 s, inout float v, inout vec2 out_, inout float reach,
+          inout bool vein) {
+    if (h.z < 0.0)
         return;
-    vec2 c = h.xy;
-    float seed = h.w;
-    float size = grown(age);
-    // its whole life: from its hit until all of it heals
-    float life = age + g_left;
-    float R = g_px * (95.0 + 80.0 * hash(vec2(seed, 1.3))) * g_grow;
-    vec2 d = s - c;
-    float dist = length(d);
-    // away from the edge it hit
-    float away = c.y < g_screen.y * 0.5 ? 1.0 : -1.0;
-
-    // dead pixels, one physical pixel each: crowded near the hit, a few all over
-    vec2 p = floor(s);
-    float dens = 0.0004 + 0.02 * clamp(1.0 - dist / (R * 3.5), 0.0, 1.0);
-    if (hash(p + seed * 17.13) < dens) {
-        float heal = life * (0.3 + 0.65 * hash(p + seed * 3.71));
-        if (age < heal && (age > 2.2 || hash(p + vec2(g_step, seed)) > 0.45))
-            col = pixInk(hash(p + seed * 9.2));
-    }
-
-    // a milky patch around the blot, where the panel is pressed
-    float n = fbm(s / (g_px * 55.0) + seed * 5.3);
-    float cloud = clamp(1.0 - dist / (R * 2.6 * size + 1.0), 0.0, 1.0);
-    col = mix(col, vec3(0.92, 0.9, 1.0), cloud * cloud * 0.35 * n * size);
-
-    // long lines through the whole screen: up and down near the hit, across past it; they
-    // flicker at first, then hold, then go one by one
-    for (int i = 0; i < 9; i++) {
-        float fi = float(i);
-        float born = 0.03 + 0.3 * hash(vec2(seed, fi + 30.0));
-        float gone = life * (0.35 + 0.55 * hash(vec2(seed, fi + 50.0)));
-        if (age < born || age > gone)
-            continue;
-        if (age < 1.8 && hash(vec2(g_step, fi + seed)) < 0.3)
-            continue;
-        float w = 1.0 + floor(hash(vec2(seed, fi + 70.0)) * 3.0);
-        if (hash(vec2(seed, fi + 90.0)) > 0.75)
-            w *= 5.0;
-        float h1 = hash(vec2(seed, fi + 10.0));
-        if (i < 6) {
-            float dx = s.x - floor(c.x + (h1 * 2.0 - 1.0) * g_screen.x * 0.3);
-            // a band shows its sub-pixels: stripes of its colours
-            if (dx >= 0.0 && dx < w)
-                col = lineInk(fract(hash(vec2(seed, fi + 110.0)) + floor(dx) * 0.37));
-        } else {
-            float dy = s.y - floor(c.y + away * (0.15 + h1 * 0.7) * g_screen.y);
-            if (dy >= 0.0 && dy < w)
-                col = lineInk(fract(hash(vec2(seed, fi + 130.0)) + floor(dy) * 0.37));
-        }
-    }
-
+    float size = grown(h.z);
     if (size <= 0.0)
         return;
-    // the blot: leaked crystal, black, ragged, running down; dark veins out of it
+    float seed = h.w;
+    float R = radius(h, w);
+    float up = away(h);
+    vec2 d = s - h.xy;
     vec2 q = d;
-    if (d.y * away > 0.0)
+    if (d.y * up > 0.0)
         q.y *= 0.7;
     float qd = length(q * vec2(1.0, 1.15));
-    float edge = R * size * (0.5 + 0.95 * n);
-    bool vein = false;
+    float n = fbm(s / (g_px * 55.0) + seed * 5.3);
+    float vi = qd - R * size * (0.5 + 0.95 * n);
+    v = smin(v, vi, g_px * 45.0);
+    out_ += d / (length(d) + 1.0) / (1.0 + max(vi, 0.0) / (g_px * 30.0));
+    reach = max(reach, R * size);
+
     for (int i = 0; i < 7; i++) {
         float fi = float(i);
         float a = (0.12 + 0.76 * hash(vec2(seed, fi + 150.0))) * PI;
-        vec2 dir = vec2(cos(a), sin(a) * away);
+        vec2 dir = vec2(cos(a), sin(a) * up);
         float along = dot(d, dir);
         float len = R * size * (1.3 + 1.8 * hash(vec2(seed, fi + 170.0)));
         if (along <= 0.0 || along > len)
@@ -182,42 +170,178 @@ void damage(vec4 h, vec2 s, inout vec3 col) {
         if (perp < g_px * (1.0 + 4.0 * (1.0 - along / len)))
             vein = true;
     }
-    if (qd < edge || vein) {
-        col = vec3(0.0);
-        // the crystal's own dim sheen here and there
-        if (qd < edge && hash(floor(s / (g_px * 2.0)) + seed) > 0.992)
-            col = vec3(0.16, 0.05, 0.3);
-    } else if (qd < edge + g_px * (2.0 + 3.0 * n)) {
-        // its rim: a bright ring where the crystal is pushed aside
-        col = mix(col, vec3(0.85, 0.75, 1.0), 0.75);
+}
+
+// pieces of the window that hit, stuck: blocks of the frame kept at the hit, a coarse mosaic of
+// its colours, crowding around the blot's rim (`v`: the joined blots' field, < 0 inside); torn
+// off their place at first and sliding back in steps as the panel settles, now and then a
+// channel off; they heal one by one, a little before the dead pixels are all gone
+void stuck(vec4 h, float w, vec2 s, float v, inout vec3 col) {
+    if (h.z < 0.0 || g_snap_on < 0.5 || v < 0.0)
+        return;
+    float seed = h.w;
+    float R = radius(h, w);
+    // rows of their own heights, cut into blocks of their own widths
+    float band = floor(s.y / (g_px * 30.0));
+    float rowH = g_px * (8.0 + floor(hash(vec2(band, seed + 3.0)) * 20.0));
+    float row = floor(s.y / rowH);
+    float colW = g_px * (20.0 + floor(hash(vec2(row, seed + 5.0)) * 70.0));
+    vec2 blk = vec2(floor((s.x + hash(vec2(row, seed)) * colW) / colW), row);
+    float near = 1.0 - length((s - h.xy) / vec2(R * 3.4, R * 2.4));
+    float rim = clamp(1.0 - v / (R * 1.2), 0.0, 1.0);
+    if (near <= 0.0 || hash(blk + seed * 1.7) > 0.35 * near + 0.35 * rim * near)
+        return;
+    if (g_left < PIX_END + 0.3 + PIX_SPAN * hash(blk + seed * 2.9))
+        return;
+    if (h.z < 0.6 && hash(blk + vec2(g_step, seed)) < 0.3)
+        return;
+    float settle = floor(clamp(h.z / 2.4, 0.0, 1.0) * 6.0) / 6.0;
+    vec2 off = (vec2(hash(blk + seed * 4.1), hash(blk + seed * 6.3)) - 0.5) * vec2(180.0, 60.0);
+    off = floor(off * (1.0 - settle) / 2.0) * 2.0 * g_px;
+    float cell = g_px * 6.0;
+    vec2 at = (floor((s + off) / cell) + 0.5) * cell;
+    vec3 p = texture2D(g_snap, toTex(at)).rgb;
+    // the app's colours, not its dark title bar
+    if (dot(p, vec3(0.3, 0.59, 0.11)) < 0.12)
+        return;
+    p = min(floor(p * 4.0 + 0.5) / 4.0 * 1.15, vec3(1.0));
+    float k = hash(blk + seed * 8.8);
+    if (k < 0.12)
+        p = p.brg;
+    else if (k < 0.16)
+        p = vec3(1.0) - p;
+    col = p;
+}
+
+// a hit's dead pixels, milky patch and lines
+void marks(vec4 h, float w, vec2 s, inout vec3 col) {
+    float age = h.z;
+    if (age < 0.0)
+        return;
+    vec2 c = h.xy;
+    float seed = h.w;
+    float size = grown(age);
+    float R = radius(h, w);
+    float dist = length(s - c);
+
+    // dead pixels, one physical pixel each: crowded near the hit, a few all over; flickering at
+    // first, then still, then healing one by one before the blots do
+    vec2 p = floor(s);
+    float dens = 0.0004 + 0.02 * clamp(1.0 - dist / (R * 3.5), 0.0, 1.0);
+    if (hash(p + seed * 17.13) < dens) {
+        float heal = PIX_END + PIX_SPAN * hash(p + seed * 3.71);
+        if (g_left > heal && (age > 2.2 || hash(p + vec2(g_step, seed)) > 0.45))
+            col = pixInk(hash(p + seed * 9.2));
+    }
+
+    // a milky patch around the blot, where the panel is pressed
+    float n = fbm(s / (g_px * 55.0) + seed * 5.3);
+    float cloud = clamp(1.0 - dist / (R * 2.6 * size + 1.0), 0.0, 1.0);
+    col = mix(col, vec3(0.92, 0.9, 1.0), cloud * cloud * 0.35 * n * size);
+
+    // long lines through the whole screen: up and down near the hit, across past it; they
+    // flicker at first, then hold, then go one by one with the dead pixels
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        float born = 0.03 + 0.3 * hash(vec2(seed, fi + 30.0));
+        float gone = PIX_END + PIX_SPAN * hash(vec2(seed, fi + 50.0));
+        if (age < born || g_left < gone)
+            continue;
+        if (age < 1.8 && hash(vec2(g_step, fi + seed)) < 0.3)
+            continue;
+        float lw = 1.0 + floor(hash(vec2(seed, fi + 70.0)) * 3.0);
+        if (hash(vec2(seed, fi + 90.0)) > 0.75)
+            lw *= 5.0;
+        float h1 = hash(vec2(seed, fi + 10.0));
+        if (i < 4) {
+            float dx = s.x - floor(c.x + (h1 * 2.0 - 1.0) * g_screen.x * 0.3);
+            // a band shows its sub-pixels: stripes of its colours
+            if (dx >= 0.0 && dx < lw)
+                col = lineInk(fract(hash(vec2(seed, fi + 110.0)) + floor(dx) * 0.37));
+        } else {
+            float dy = s.y - floor(c.y + away(h) * (0.15 + h1 * 0.7) * g_screen.y);
+            if (dy >= 0.0 && dy < lw)
+                col = lineInk(fract(hash(vec2(seed, fi + 130.0)) + floor(dy) * 0.37));
+        }
     }
 }
 
 void main() {
     vec2 s = (g_tex_to_screen * vec3(v_coords, 1.0)).xy * g_screen;
 
-    float shift = 0.0;
+    // the latest hit: the whole screen knocked up and shaking down, rows torn sideways
+    vec2 sp = s;
     float split = 0.0;
-    jolt(g_h0, s, shift, split);
-    jolt(g_h1, s, shift, split);
-    jolt(g_h2, s, shift, split);
-    jolt(g_h3, s, shift, split);
-    jolt(g_h4, s, shift, split);
-    jolt(g_h5, s, shift, split);
+    float ja = g_jolt.x;
+    if (ja >= 0.0 && ja < 0.45) {
+        float j = 1.0 - ja / 0.45;
+        j *= j;
+        float step2 = 2.0 * g_px;
+        sp.y += floor(g_jolt.y * j * cos(ja * 2.0 * PI * 7.0) / step2 + 0.5) * step2;
+        float rowH = g_px * (3.0 + floor(hash(vec2(floor(s.y / (g_px * 28.0)), g_step)) * 22.0));
+        float row = floor(s.y / rowH);
+        if (hash(vec2(row, g_step)) < 0.55)
+            sp.x += (hash(vec2(row, g_step + 7.0)) - 0.5) * 2.0 * g_px * 140.0 * j;
+        split += g_px * 9.0 * j;
+    }
 
-    vec2 sp = s + vec2(shift, 0.0);
+    // the blots, joined
+    float v = 1e6;
+    vec2 out_ = vec2(0.0);
+    float reach = 0.0;
+    bool vein = false;
+    blot(g_h0, g_wa.x, s, v, out_, reach, vein);
+    blot(g_h1, g_wa.y, s, v, out_, reach, vein);
+    blot(g_h2, g_wa.z, s, v, out_, reach, vein);
+    blot(g_h3, g_wb.x, s, v, out_, reach, vein);
+    blot(g_h4, g_wb.y, s, v, out_, reach, vein);
+    blot(g_h5, g_wb.z, s, v, out_, reach, vein);
+
+    // around them the picture is pushed aside, wobbling, its colours split and fringed
+    float press = 0.0;
+    if (reach > 0.0 && v > 0.0) {
+        press = clamp(1.0 - v / (reach * 0.6 + g_px * 20.0), 0.0, 1.0);
+        press *= press;
+        vec2 dir = length(out_) > 0.0 ? normalize(out_) : vec2(0.0);
+        sp -= dir * g_px * 26.0 * press;
+        sp += (vec2(noise(s / (g_px * 9.0)), noise(s / (g_px * 9.0) + 5.7)) - 0.5) * g_px * 12.0 * press;
+        split += g_px * 7.0 * press;
+    }
+
     vec3 col = texture2D(tex, toTex(sp)).rgb;
     if (split > 0.0) {
         col.r = texture2D(tex, toTex(sp + vec2(split, 0.0))).r;
         col.b = texture2D(tex, toTex(sp - vec2(split, 0.0))).b;
     }
+    if (press > 0.15)
+        col = mix(col, fringeInk(floor(v / (g_px * 4.0))), 0.22 * press);
 
-    damage(g_h0, s, col);
-    damage(g_h1, s, col);
-    damage(g_h2, s, col);
-    damage(g_h3, s, col);
-    damage(g_h4, s, col);
-    damage(g_h5, s, col);
+    stuck(g_h0, g_wa.x, s, v, col);
+    stuck(g_h1, g_wa.y, s, v, col);
+    stuck(g_h2, g_wa.z, s, v, col);
+    stuck(g_h3, g_wb.x, s, v, col);
+    stuck(g_h4, g_wb.y, s, v, col);
+    stuck(g_h5, g_wb.z, s, v, col);
+
+    marks(g_h0, g_wa.x, s, col);
+    marks(g_h1, g_wa.y, s, col);
+    marks(g_h2, g_wa.z, s, col);
+    marks(g_h3, g_wb.x, s, col);
+    marks(g_h4, g_wb.y, s, col);
+    marks(g_h5, g_wb.z, s, col);
+
+    // the leaked crystal: black, its own dim sheen here and there; a bright rim where it pushes
+    // the rest aside. The pointer under it is gone too.
+    if (reach > 0.0) {
+        float rim = g_px * (2.0 + 3.0 * fbm(s / (g_px * 55.0)));
+        if (v < 0.0 || vein) {
+            col = vec3(0.0);
+            if (v < 0.0 && hash(floor(s / (g_px * 2.0)) + 0.37) > 0.992)
+                col = vec3(0.16, 0.05, 0.3);
+        } else if (v < rim) {
+            col = mix(col, vec3(0.85, 0.75, 1.0), 0.75);
+        }
+    }
 
     vec4 color = vec4(col, 1.0);
 #if defined(NO_ALPHA)

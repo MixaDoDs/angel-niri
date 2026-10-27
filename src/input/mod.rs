@@ -1099,8 +1099,9 @@ impl State {
             Action::SetMinimizeOnCopy(on) => {
                 crate::minimize::set_on_copy(on);
             }
-            Action::SetDeskThrow(on) => {
+            Action::SetDeskThrow(on, strength) => {
                 crate::desk_throw::set(on);
+                crate::desk_throw::set_strength(strength);
             }
             Action::SnapshotWindow(id, path) => {
                 self.snapshot_window(id, path.into());

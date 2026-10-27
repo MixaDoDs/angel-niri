@@ -50,6 +50,10 @@ struct Inner {
     intermediate: Option<GlesTexture>,
     /// Reusable storage for subregion-filtered damage rects.
     subregion_damage: Vec<Rectangle<i32, Physical>>,
+    /// angel-niri (desk_throw.rs): the frame as each hit came, around the hit (the window pressed
+    /// into the edge), for its stuck pieces; and which hit it last kept.
+    snap: Option<GlesTexture>,
+    snap_key: Option<u64>,
 }
 
 impl FramebufferEffect {
@@ -282,6 +286,15 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 }
             }
 
+            // angel-niri (desk_throw.rs): a new hit: keep the frame around it
+            let snap_hit = (self.glitch.and_then(|g| g.snap)).filter(|(key, _)| inner.snap_key != Some(*key));
+            if snap_hit.is_some() && inner.snap.as_ref().is_none_or(|snap| snap.size() != size) {
+                let renderer = guard.as_mut();
+                inner.snap = Some(renderer.create_buffer(Fourcc::Abgr8888, size)?);
+                // the first one keeps all of it, so nothing undefined shows
+                inner.snap_key = None;
+            }
+
             // We can't use renderer.with_context() as that will reset the GlesFrame binding that we
             // want to blit from.
             drop(guard);
@@ -333,6 +346,86 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                     Ok(())
                 }
             })??;
+
+            if let (Some((key, pos)), Some(snap)) = (snap_hit, &inner.snap) {
+                let full = Rectangle::from_size(size);
+                let area = if inner.snap_key.is_none() {
+                    full
+                } else {
+                    // around the hit, down from the edge: where the window that hit is now
+                    let scale = f64::from(self.scale);
+                    let screen = (self.geometry.size.w * scale, self.geometry.size.h * scale);
+                    let tex_to_screen = Mat3::from_translation(Vec2::new(0.5, 0.5))
+                        * transform.matrix()
+                        * Mat3::from_translation(Vec2::new(-0.5, -0.5));
+                    let to_tex = tex_to_screen.inverse();
+                    let (x, y) = (f64::from(pos[0]) * scale, f64::from(pos[1]) * scale);
+                    let (w, h) = (420. * scale, 460. * scale);
+                    let corner = |sx: f64, sy: f64| {
+                        let p = to_tex.transform_point2(Vec2::new(
+                            (sx / screen.0) as f32,
+                            (sy / screen.1) as f32,
+                        ));
+                        (f64::from(p.x) * f64::from(size.w), f64::from(p.y) * f64::from(size.h))
+                    };
+                    let a = corner(x - w, y - h);
+                    let b = corner(x + w, y + h);
+                    let lo = (a.0.min(b.0).floor() as i32, a.1.min(b.1).floor() as i32);
+                    let hi = (a.0.max(b.0).ceil() as i32, a.1.max(b.1).ceil() as i32);
+                    Rectangle::from_extremities(lo, hi)
+                        .intersection(full)
+                        .unwrap_or_default()
+                };
+                let (from, into) = (framebuffer.tex_id(), snap.tex_id());
+                frame.with_context(|gl| unsafe {
+                    while gl.GetError() != ffi::NO_ERROR {}
+                    let mut read_fbo = 0i32;
+                    let mut draw_fbo = 0i32;
+                    gl.GetIntegerv(ffi::READ_FRAMEBUFFER_BINDING, &mut read_fbo as *mut _);
+                    gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut draw_fbo as *mut _);
+                    gl.Disable(ffi::SCISSOR_TEST);
+                    let mut fbos = [0u32; 2];
+                    gl.GenFramebuffers(2, fbos.as_mut_ptr());
+                    gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, fbos[0]);
+                    gl.FramebufferTexture2D(
+                        ffi::READ_FRAMEBUFFER,
+                        ffi::COLOR_ATTACHMENT0,
+                        ffi::TEXTURE_2D,
+                        from,
+                        0,
+                    );
+                    gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbos[1]);
+                    gl.FramebufferTexture2D(
+                        ffi::DRAW_FRAMEBUFFER,
+                        ffi::COLOR_ATTACHMENT0,
+                        ffi::TEXTURE_2D,
+                        into,
+                        0,
+                    );
+                    let (x0, y0) = (area.loc.x, area.loc.y);
+                    let (x1, y1) = (x0 + area.size.w, y0 + area.size.h);
+                    gl.BlitFramebuffer(
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        ffi::COLOR_BUFFER_BIT,
+                        ffi::NEAREST,
+                    );
+                    gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, read_fbo as u32);
+                    gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, draw_fbo as u32);
+                    gl.Enable(ffi::SCISSOR_TEST);
+                    gl.DeleteFramebuffers(2, fbos.as_ptr());
+                    if gl.GetError() != ffi::NO_ERROR {
+                        warn!("error keeping the frame of a hit");
+                    }
+                })?;
+                inner.snap_key = Some(key);
+            }
 
             // If blur is off, use the unblurred texture.
             if self.blur_options.is_none() {
@@ -443,7 +536,18 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 let [x, y, age, seed] = glitch.spots[i];
                 [x * self.scale, y * self.scale, age, seed]
             };
+            // its stuck pieces come from the frames kept at the hits, on the second texture unit
+            let snap = inner.snap.as_ref().map(|snap| snap.tex_id());
+            if let Some(snap) = snap {
+                frame.with_context(|gl| unsafe {
+                    gl.ActiveTexture(ffi::TEXTURE1);
+                    gl.BindTexture(ffi::TEXTURE_2D, snap);
+                    gl.ActiveTexture(ffi::TEXTURE0);
+                })?;
+            }
             let uniforms = [
+                Uniform::new("g_snap", 1i32),
+                Uniform::new("g_snap_on", if snap.is_some() { 1f32 } else { 0. }),
                 Uniform::new("tex_size", [size.w as f32, size.h as f32]),
                 Uniform::new("g_screen", screen),
                 mat3_uniform("g_tex_to_screen", tex_to_screen),
@@ -454,12 +558,21 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 Uniform::new("g_h3", spot(3)),
                 Uniform::new("g_h4", spot(4)),
                 Uniform::new("g_h5", spot(5)),
+                Uniform::new(
+                    "g_wa",
+                    [glitch.swells[0], glitch.swells[1], glitch.swells[2]],
+                ),
+                Uniform::new(
+                    "g_wb",
+                    [glitch.swells[3], glitch.swells[4], glitch.swells[5]],
+                ),
+                Uniform::new("g_jolt", [glitch.jolt[0], glitch.jolt[1] * self.scale]),
                 Uniform::new("g_step", glitch.step),
                 Uniform::new("g_px", self.scale),
                 Uniform::new("g_grow", glitch.grow),
                 Uniform::new("g_left", glitch.left),
             ];
-            return frame.render_texture_from_to(
+            let drawn = frame.render_texture_from_to(
                 texture,
                 Rectangle::from_size(texture.size().to_f64()),
                 clamped_dst,
@@ -474,6 +587,14 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                     &[]
                 },
             );
+            if snap.is_some() {
+                frame.with_context(|gl| unsafe {
+                    gl.ActiveTexture(ffi::TEXTURE1);
+                    gl.BindTexture(ffi::TEXTURE_2D, 0);
+                    gl.ActiveTexture(ffi::TEXTURE0);
+                })?;
+            }
+            return drawn;
         }
 
         let program = Shaders::get_from_frame(frame).postprocess_and_clip.clone();
@@ -540,6 +661,8 @@ impl Inner {
             blur: Blur::new(renderer),
             intermediate: None,
             subregion_damage: Vec::new(),
+            snap: None,
+            snap_key: None,
         }
     }
 }

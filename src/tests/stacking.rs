@@ -487,18 +487,23 @@ fn stacking_throws_the_gathered_windows() {
     let fly = flying(&mut f);
     assert!(fly.len() == 2 && fly.contains(&b) && fly.contains(&c));
     let throws = std::mem::take(&mut f.niri().layout.desk_throws);
-    assert_eq!(throws.len(), 1, "only the far one hits");
-    assert!(throws[0].far && !throws[0].bottom);
-    assert_eq!(throws[0].pos[1], 0.);
+    assert_eq!(throws.len(), 2, "every one sounds");
+    let far: Vec<_> = throws.iter().filter(|t| t.far).collect();
+    assert_eq!(far.len(), 1, "only the far one hits hard");
+    assert!(!far[0].bottom);
+    assert_eq!(far[0].pos[1], 0.);
     f.niri_complete_animations();
     assert!(flying(&mut f).is_empty());
 
     let (wait, n) = f.niri().layout.throw_out().unwrap();
-    assert!(wait <= std::time::Duration::from_secs(1));
+    assert!(wait <= std::time::Duration::from_millis(1500));
     assert!(crate::stacking::on(), "ended before they flew off");
     assert_eq!(flying(&mut f).len(), 2);
     let throws = std::mem::take(&mut f.niri().layout.desk_throws);
-    assert!(throws.is_empty(), "leaving breaks nothing");
+    assert!(
+        throws.len() == 2 && throws.iter().all(|t| t.bottom),
+        "leaving they drop, breaking nothing"
+    );
     assert!(f.niri().layout.throw_out_pending(n));
 
     set_stacking(&mut f, id, false);

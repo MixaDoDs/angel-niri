@@ -122,6 +122,9 @@ impl Shaders {
                 UniformName::new("throw_tile_size", UniformType::_2f),
                 UniformName::new("throw_angle", UniformType::_1f),
                 UniformName::new("throw_pixel", UniformType::_1f),
+                UniformName::new("throw_ghost0", UniformType::_4f),
+                UniformName::new("throw_ghost1", UniformType::_4f),
+                UniformName::new("throw_ghost2", UniformType::_4f),
             ],
             &["niri_tex"],
         )
@@ -202,6 +205,8 @@ impl Shaders {
             .compile_custom_texture_shader(
                 include_str!("glitch.frag"),
                 &[
+                    UniformName::new("g_snap", UniformType::_1i),
+                    UniformName::new("g_snap_on", UniformType::_1f),
                     UniformName::new("tex_size", UniformType::_2f),
                     UniformName::new("g_screen", UniformType::_2f),
                     UniformName::new("g_tex_to_screen", UniformType::Matrix3x3),
@@ -212,6 +217,9 @@ impl Shaders {
                     UniformName::new("g_h3", UniformType::_4f),
                     UniformName::new("g_h4", UniformType::_4f),
                     UniformName::new("g_h5", UniformType::_4f),
+                    UniformName::new("g_wa", UniformType::_3f),
+                    UniformName::new("g_wb", UniformType::_3f),
+                    UniformName::new("g_jolt", UniformType::_2f),
                     UniformName::new("g_step", UniformType::_1f),
                     UniformName::new("g_px", UniformType::_1f),
                     UniformName::new("g_grow", UniformType::_1f),

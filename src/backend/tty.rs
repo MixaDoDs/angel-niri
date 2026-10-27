@@ -1956,6 +1956,11 @@ impl Tty {
             if debug.disable_cursor_plane {
                 flags.remove(FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT);
             }
+            // angel-niri (desk_throw.rs): the pointer under a broken screen is drawn in it, else
+            // the cursor plane would put it back on top
+            if crate::desk_throw::glitch_at(&output.name(), niri.clock.now()).is_some() {
+                flags.remove(FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT);
+            }
             if debug.skip_cursor_only_updates_during_vrr {
                 let output_state = niri.output_state.get(output).unwrap();
                 if output_state.frame_clock.vrr() {

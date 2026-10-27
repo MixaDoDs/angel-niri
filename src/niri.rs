@@ -4606,17 +4606,19 @@ impl Niri {
             push
         };
 
-        // The pointer goes on the top.
-        if include_pointer && self.pointer_visibility.is_visible() {
-            self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
-        }
-
-        // angel-niri (desk_throw.rs): a broken screen over everything but the pointer
+        // angel-niri (desk_throw.rs): a broken screen over everything, the pointer too: it sinks
+        // into the dead zone like the rest of the picture (the backend keeps it off the cursor
+        // plane meanwhile, see `desk_throw::glitch_at` in tty.rs)
         if let Some(glitch) = crate::desk_throw::glitch_at(&output.name(), self.clock.now()) {
             let geometry = Rectangle::from_size(output_size(output));
             let elem =
                 (state.glitch_fx.borrow_mut()).render_glitch(geometry, output_scale.x, glitch);
             push(elem.into());
+        }
+
+        // The pointer goes on the top.
+        if include_pointer && self.pointer_visibility.is_visible() {
+            self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
         }
 
         // Next, the screen transition texture.

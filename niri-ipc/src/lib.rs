@@ -417,6 +417,11 @@ pub enum Action {
         #[serde(default = "default_true")]
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
+        /// How hard: 0 calm (they knock, nothing breaks), 1 the usual, 2 wild (longer apart,
+        /// trails, a harder shake, a bigger and longer break).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1))]
+        #[serde(default = "default_desk_throw_strength")]
+        strength: u8,
     },
     /// Save how a window looks now to a PNG, quietly (angel-niri).
     ///
@@ -2704,6 +2709,10 @@ impl OutputAction {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_desk_throw_strength() -> u8 {
+    1
 }
 
 fn default_cursor_zoom_ms() -> u32 {
