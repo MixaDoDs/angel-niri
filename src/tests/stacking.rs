@@ -494,7 +494,7 @@ fn stacking_throws_the_gathered_windows() {
         "into the top first"
     );
     let hardest = |far: bool| {
-        (throws.iter().filter(|t| t.far == far))
+        (throws.iter().filter(|t| t.far == far && !t.slide))
             .map(|t| t.power)
             .fold(0., f64::max)
     };
@@ -532,5 +532,72 @@ fn stacking_throws_the_gathered_windows() {
     assert!(flying(&mut f).is_empty(), "still flying on their desks");
     let ws = f.niri().layout.active_workspace().unwrap();
     assert!(ws.has_window(&a) && !ws.has_window(&b) && !ws.has_window(&c));
+    crate::desk_throw::set(false);
+}
+
+// with the throw on, the gathered windows come up from below one at a time: until its turn each
+// waits out of sight under the screen, and each sets off and hits the top 300 ms after the one
+// before (a slow one from the next desk doesn't land with a fast one from further)
+#[test]
+fn stacking_throws_one_window_at_a_time() {
+    crate::desk_throw::set(true);
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let _a = open(&mut f, id, 100, 100);
+    let mut thrown = Vec::new();
+    for desk in [1, 1, 2, 3] {
+        let win = open(&mut f, id, 300, 200);
+        f.niri()
+            .layout
+            .move_to_workspace(Some(&win), desk, ActivateWindow::No);
+        thrown.push(win);
+    }
+    f.double_roundtrip(id);
+
+    let set_time = |f: &mut Fixture, ms: u64| {
+        let niri = f.niri();
+        let now = niri.clock.now();
+        niri.clock.set_unadjusted(now);
+        let _ = niri.clock.now();
+        niri.clock.set_unadjusted(std::time::Duration::ZERO);
+        niri.clock.set_rate(1.0);
+        let _ = niri.clock.now();
+        niri.clock
+            .set_unadjusted(std::time::Duration::from_millis(ms));
+        let _ = niri.clock.now();
+        niri.clock.set_rate(0.0);
+    };
+    let in_sight = |f: &mut Fixture| -> usize {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.tiles_with_render_positions()
+            .filter(|(tile, _, _)| thrown.contains(&tile.window().window))
+            .filter(|(tile, pos, _)| pos.y < 1080. && pos.y + tile.tile_size().h > 0.)
+            .count()
+    };
+
+    set_time(&mut f, 0);
+    set_stacking(&mut f, id, true);
+    set_time(&mut f, 0);
+    assert_eq!(in_sight(&mut f), 0, "all wait below at first");
+    let throws = std::mem::take(&mut f.niri().layout.desk_throws);
+    let mut offs: Vec<u64> = throws.iter().map(|t| t.off_ms).collect();
+    offs.sort();
+    offs.dedup();
+    let hits: Vec<u64> = (throws.iter().filter(|t| t.launch))
+        .map(|t| t.in_ms)
+        .collect();
+    assert_eq!(offs.len(), 4, "{offs:?}");
+    assert_eq!(hits.len(), 4, "{hits:?}");
+    let mut hits_sorted = hits.clone();
+    hits_sorted.sort();
+    for w in offs.windows(2).chain(hits_sorted.windows(2)) {
+        assert!(w[1] >= w[0] + 299, "{offs:?} {hits:?}");
+    }
+    // one more in sight at each one's turn
+    for (k, off) in offs.iter().enumerate() {
+        set_time(&mut f, off + 40);
+        assert_eq!(in_sight(&mut f), k + 1, "{k} at {off}");
+    }
     crate::desk_throw::set(false);
 }

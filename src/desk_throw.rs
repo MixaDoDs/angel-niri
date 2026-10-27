@@ -827,6 +827,16 @@ impl Fly {
         self.anim.is_done()
     }
 
+    /// How far into its flight it first hits (or ends), ms.
+    pub fn hit_ms(&self) -> f64 {
+        self.contacts.first().map_or(self.ms, |c| c.at)
+    }
+
+    /// It sets off `by` later.
+    pub fn delay(&mut self, by: Duration) {
+        self.anim = self.anim.clone().delayed(by);
+    }
+
     /// How many ms into the flight it is (0 before it sets off).
     fn elapsed(&self) -> f64 {
         self.anim.value().clamp(0., 1.) * self.ms
@@ -975,14 +985,10 @@ impl Fly {
     }
 }
 
-/// When each of a row of windows (`far` flags, the near ones first) sets off, from now. Arriving:
-/// one every `GAP_MS`, however many (a show, not a hurry). Leaving: quickly, all of them off
-/// within `SPREAD_MS`.
-pub fn delays(far: &[bool], leaving: bool) -> Vec<Duration> {
-    let n = far.len() as u64;
-    let gap = if !leaving {
-        GAP_MS as f64
-    } else if n > 1 {
+/// Leaving: when each of `n` windows sets off, from now: quickly, all of them off within
+/// `SPREAD_MS`.
+pub fn delays(n: usize) -> Vec<Duration> {
+    let gap = if n > 1 {
         (feel().gap_ms as f64).min(SPREAD_MS as f64 / (n - 1) as f64)
     } else {
         0.
@@ -992,7 +998,24 @@ pub fn delays(far: &[bool], leaving: bool) -> Vec<Duration> {
         .collect()
 }
 
-/// Arriving, a window sets off this long after the one before, ms.
+/// Arriving: when each of a row of windows sets off, from now, given how far into its flight
+/// each hits first (ms): one at a time, a show, not a hurry — each sets off and hits at least
+/// `GAP_MS` after the one before, however many (a slow one off first doesn't land with the
+/// next).
+pub fn arrivals(hits: &[f64]) -> Vec<Duration> {
+    let mut last: Option<(f64, f64)> = None;
+    hits.iter()
+        .map(|&hit| {
+            let off = last.map_or(0., |(off, at)| {
+                f64::max(off + GAP_MS as f64, at + GAP_MS as f64 - hit)
+            });
+            last = Some((off, off + hit));
+            Duration::from_millis(off.round() as u64)
+        })
+        .collect()
+}
+
+/// Arriving, a window sets off and hits at least this long after the one before, ms.
 const GAP_MS: u64 = 300;
 /// Leaving, a throw's windows all set off within this, ms.
 const SPREAD_MS: u64 = 1100;
@@ -1177,15 +1200,28 @@ mod tests {
     }
 
     #[test]
-    fn arriving_one_every_gap_leaving_all_within_the_spread() {
-        let many = delays(&[true; 12], false);
-        for (i, d) in many.iter().enumerate() {
+    fn arriving_one_at_a_time_leaving_all_within_the_spread() {
+        let ms = |d: Duration| d.as_millis() as f64;
+        // a slow one, then fast ones: the fast ones wait so as not to land with it
+        let hits = [900., 400., 400., 700.];
+        let off = arrivals(&hits);
+        assert_eq!(off[0], Duration::ZERO);
+        for i in 1..hits.len() {
+            assert!(
+                ms(off[i]) - ms(off[i - 1]) >= GAP_MS as f64 - 0.5,
+                "{i} off"
+            );
+            let at = |k: usize| ms(off[k]) + hits[k];
+            assert!(at(i) - at(i - 1) >= GAP_MS as f64 - 0.5, "{i} hit");
+        }
+        // equal flights: exactly one every GAP_MS
+        let even = arrivals(&[500.; 12]);
+        for (i, d) in even.iter().enumerate() {
             assert_eq!(*d, Duration::from_millis(i as u64 * GAP_MS));
         }
-        let back = delays(&[false, true, true], true);
+        let back = delays(3);
         assert_eq!(back[2], Duration::from_millis(feel().gap_ms * 2));
-        let back = delays(&[true; 12], true);
-        assert!(back[11] <= Duration::from_millis(SPREAD_MS));
+        assert!(delays(12)[11] <= Duration::from_millis(SPREAD_MS));
     }
 
     #[test]

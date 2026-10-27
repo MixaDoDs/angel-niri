@@ -99,21 +99,41 @@ fn throw_tiles<W: LayoutElement>(
     now: Duration,
     output: &str,
 ) -> (Vec<niri_ipc::DeskThrow>, Duration) {
-    let far: Vec<bool> = thrown.iter().map(|(_, far)| *far).collect();
-    let delays = crate::desk_throw::delays(&far, leaving);
+    let order_of = |id: &W::Id| thrown.iter().position(|(win, _)| win == id);
+    let mut delays = crate::desk_throw::delays(if leaving { thrown.len() } else { 0 });
     // every throw its own: the same apps fly a little differently next time
     let nonce = crate::utils::get_monotonic_time().as_nanos() as u64;
-    let mut hits = Vec::new();
-    let mut moves = Vec::new();
+    let mut first_hits = vec![0.; thrown.len()];
     for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
-        let id = tile.window().id().clone();
-        let Some(order) = thrown.iter().position(|(win, _)| *win == id) else {
+        let Some(order) = order_of(tile.window().id()) else {
             continue;
         };
         let far = thrown[order].1;
         let app = tile.window().app_id().unwrap_or_default();
         let path = crate::desk_throw::Path::new(&app, order, nonce);
-        tile.throw(delays[order], leaving, far, pos, view, path);
+        let delay = delays.get(order).copied().unwrap_or_default();
+        tile.throw(delay, leaving, far, pos, view, path);
+        if let Some(fly) = tile.fly() {
+            first_hits[order] = fly.hit_ms();
+        }
+    }
+    // arriving, one at a time by when each hits: a slow one doesn't land with the next
+    if !leaving {
+        delays = crate::desk_throw::arrivals(&first_hits);
+        for tile in ws.tiles_mut() {
+            if let (Some(order), Some(fly)) = (order_of(tile.window().id()), tile.fly_mut()) {
+                fly.delay(delays[order]);
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    let mut moves = Vec::new();
+    for tile in ws.tiles() {
+        let id = tile.window().id().clone();
+        let Some(order) = order_of(&id) else {
+            continue;
+        };
+        let far = thrown[order].1;
         let Some(fly) = tile.fly() else {
             continue;
         };

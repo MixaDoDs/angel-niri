@@ -825,6 +825,10 @@ impl<W: LayoutElement> Tile<W> {
         self.fly.as_ref()
     }
 
+    pub fn fly_mut(&mut self) -> Option<&mut crate::desk_throw::Fly> {
+        self.fly.as_mut()
+    }
+
     pub fn stop_fly(&mut self) {
         self.fly = None;
     }
