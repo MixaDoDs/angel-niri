@@ -1,7 +1,9 @@
 // angel-niri (desk_throw.rs): a window in flight between desks, drawn turned by `throw_angle`
 // around its middle in whole `throw_pixel` cells — it steps, it doesn't smear. Behind it up to
 // three afterimages (`throw_ghostN`: offset x, y from it, their turn, how opaque), dithered in
-// the same cells by a 4×4 Bayer: the speed shows without a blur.
+// the same cells by a 4×4 Bayer: the speed shows without a blur. Where it hit hardest it is
+// dented (`throw_dent`: the spot on its edge, how deep, how far along it; `throw_dent_in`: the way
+// in, all in its own px): the edge pushed in, the picture crushed up behind it, a dark crease.
 precision highp float;
 
 uniform float niri_alpha;
@@ -18,6 +20,8 @@ uniform float throw_pixel;
 uniform vec4 throw_ghost0;
 uniform vec4 throw_ghost1;
 uniform vec4 throw_ghost2;
+uniform vec4 throw_dent;
+uniform vec2 throw_dent_in;
 
 // where `p` falls on the window placed at `loc` turned by `angle`, in its own px; < 0 outside
 vec2 onTile(vec2 p, vec2 loc, float angle) {
@@ -46,6 +50,33 @@ float bayer(vec2 cell) {
     return (4.0 * x + y + 0.5) / 16.0;
 }
 
+// the dent at `q` (its own px): where to take the picture from (x < 0: pushed in, nothing there)
+// and how lit it is
+vec3 dented(vec2 q) {
+    if (throw_dent.z <= 0.0)
+        return vec3(q, 1.0);
+    vec2 n = throw_dent_in;
+    vec2 t = vec2(-n.y, n.x);
+    vec2 d = q - throw_dent.xy;
+    float a = dot(d, t);
+    float b = dot(d, n);
+    float reach = throw_dent.w;
+    if (abs(a) >= reach || b >= reach)
+        return vec3(q, 1.0);
+    float k = 1.0 - (a / reach) * (a / reach);
+    float deep = floor(throw_dent.z * k * k / throw_pixel + 0.5) * throw_pixel;
+    if (b < deep)
+        return vec3(-1.0, -1.0, 0.0);
+    // the picture behind it crushed up into what is left, darker the nearer the crease
+    float left = (b - deep) / max(reach - deep, 1.0);
+    vec2 from = throw_dent.xy + t * a + n * (left * reach);
+    if (b - deep < throw_pixel)
+        return vec3(from, 0.45);
+    float fold = mod(floor(a / (throw_pixel * 3.0)), 2.0) * 0.07;
+    float lit = 1.0 - floor((1.0 - left) * 3.0) / 3.0 * 0.22 - fold * (1.0 - left);
+    return vec3(from, lit);
+}
+
 bool ghost(vec2 p, vec2 cell, vec4 g, inout vec4 color) {
     if (g.w <= 0.0 || bayer(cell) >= g.w)
         return false;
@@ -63,9 +94,12 @@ void main() {
 
     vec2 q = onTile(p, throw_tile_loc, throw_angle);
     vec4 color = vec4(0.0);
-    if (q.x >= 0.0)
-        color = sampleTile(q);
-    else if (!ghost(p, cell, throw_ghost0, color) && !ghost(p, cell, throw_ghost1, color))
+    vec3 dq = q.x >= 0.0 ? dented(q) : vec3(-1.0);
+    if (dq.x >= 0.0)
+        color = sampleTile(dq.xy) * vec4(vec3(dq.z), 1.0);
+    else if (q.x >= 0.0) {
+        // pushed in: what is behind it shows
+    } else if (!ghost(p, cell, throw_ghost0, color) && !ghost(p, cell, throw_ghost1, color))
         ghost(p, cell, throw_ghost2, color);
     gl_FragColor = color * niri_alpha;
 }

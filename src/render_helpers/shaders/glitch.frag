@@ -47,8 +47,12 @@ uniform vec4 g_h5;
 // how many later hits swelled each blot (g_h0…2, g_h3…5)
 uniform vec3 g_wa;
 uniform vec3 g_wb;
-// the latest hit's age (s, < 0: none) and how far the screen shakes (physical px)
-uniform vec2 g_jolt;
+// how hard each hit was, 0…1 (g_h0…2, g_h3…5): below BLOT only cracks, fewer and shorter
+uniform vec3 g_pa;
+uniform vec3 g_pb;
+// the latest hit's age (s, < 0: none), how far the screen shakes (physical px), which way (the
+// inward normal of the edge it hit)
+uniform vec4 g_jolt;
 uniform float g_step;   // the stutter step: flickering changes with it
 uniform float g_px;     // physical px per logical px
 uniform float g_grow;   // every blot this much bigger for the hits so far
@@ -59,6 +63,8 @@ uniform float g_left;   // s until it has all healed: the hits heal together
 // the dead pixels and lines are gone this long before the end, healing over the span before
 #define PIX_END 4.3
 #define PIX_SPAN 2.0
+// a hit this hard leaks a blot, lines and stuck pieces too
+#define BLOT 0.55
 // the cracks: rays round the hit, straight bits in each
 #define RAYS 11
 #define SEGS 5
@@ -252,7 +258,12 @@ void crackChord(vec2 p, vec2 q, vec2 r, float seed, float fi, float fj, float ri
 // middle the glass crushed into little shards, each its own bit of the picture, a little off and
 // lit its own way. Lines one physical pixel thick: dark on the picture, catching the light on the
 // black of the leaked crystal. They shoot out in the first 0.12 s and go with the blot.
-void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
+// the hit `h` if it was hard enough for a blot, else none
+vec4 hard(vec4 h, float p) {
+    return p >= BLOT ? h : vec4(h.xy, -1.0, h.w);
+}
+
+void cracks(vec4 h, float w, float power, vec2 s, float v, inout vec3 col) {
     if (h.z < 0.0)
         return;
     float size = grown(h.z);
@@ -261,7 +272,7 @@ void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
     float seed = h.w;
     vec2 d = s - h.xy;
     float r = length(d);
-    float full = radius(h, w) * (2.6 + 1.2 * hash(vec2(seed, 7.7))) * size;
+    float full = radius(h, w) * (2.6 + 1.2 * hash(vec2(seed, 7.7))) * size * mix(0.3, 1.0, power);
     if (r > full * clamp(h.z / 0.12, 0.0, 1.0))
         return;
     float pa = atan(d.y, d.x);
@@ -269,7 +280,7 @@ void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
 
     // the crushed middle: shards, their edges cracks too
     float core = full * 0.14 * (0.8 + 0.4 * noise(vec2(pa * 2.0 + seed, seed)));
-    if (r < core * 1.4) {
+    if (power >= BLOT && r < core * 1.4) {
         float cs = g_px * 9.0;
         vec2 g = d / cs;
         vec2 gi = floor(g);
@@ -327,7 +338,8 @@ void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
         float base = (fi + 0.8 * hash(vec2(seed, fi + 200.0))) / float(RAYS) * 2.0 * PI;
         float len = full * (0.55 + 0.45 * hash(vec2(seed, fi + 220.0)));
         float off = abs(mod(pa - base + PI, 2.0 * PI) - PI);
-        bool near = off < 0.75 || r < g_px * 16.0;
+        // a light hit: a few rays only
+        bool near = (off < 0.75 || r < g_px * 16.0) && fi < mix(3.0, float(RAYS), power);
         vec2 a = vec2(0.0);
         vec2 p1 = vec2(0.0);
         vec2 p2 = vec2(0.0);
@@ -365,7 +377,7 @@ void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
             f2 = p2;
             f3 = p3;
             first = base;
-        } else if (abs(mod(pa - (prev + base) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
+        } else if (power > 0.45 && abs(mod(pa - (prev + base) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
             crackChord(d, q1, p1, seed, fi, 0.0, 0.25, line, half_, tip);
             crackChord(d, q2, p2, seed, fi, 1.0, 0.45, line, half_, tip);
             crackChord(d, q3, p3, seed, fi, 2.0, 0.65, line, half_, tip);
@@ -376,7 +388,7 @@ void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
         prev = base;
     }
     // the last ray to the first, round the circle
-    if (abs(mod(pa - (prev + first + 2.0 * PI) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
+    if (power > 0.45 && abs(mod(pa - (prev + first + 2.0 * PI) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
         crackChord(d, q1, f1, seed, float(RAYS), 0.0, 0.25, line, half_, tip);
         crackChord(d, q2, f2, seed, float(RAYS), 1.0, 0.45, line, half_, tip);
         crackChord(d, q3, f3, seed, float(RAYS), 2.0, 0.65, line, half_, tip);
@@ -452,20 +464,22 @@ void marks(vec4 h, float w, vec2 s, inout vec3 col) {
 void main() {
     vec2 s = (g_tex_to_screen * vec3(v_coords, 1.0)).xy * g_screen;
 
-    // the latest hit: the whole screen knocked up and shaking down, rows torn sideways
+    // the latest hit: the whole screen knocked away from the edge hit and shaking back, the
+    // harder the further; a hard one tears rows sideways too
     vec2 sp = s;
     float split = 0.0;
     float ja = g_jolt.x;
-    if (ja >= 0.0 && ja < 0.45) {
-        float j = 1.0 - ja / 0.45;
+    if (ja >= 0.0 && ja < 0.5) {
+        float j = 1.0 - ja / 0.5;
         j *= j;
         float step2 = 2.0 * g_px;
-        sp.y += floor(g_jolt.y * j * cos(ja * 2.0 * PI * 7.0) / step2 + 0.5) * step2;
+        sp += g_jolt.zw * floor(g_jolt.y * j * cos(ja * 2.0 * PI * 7.0) / step2 + 0.5) * step2;
+        float tear = clamp(g_jolt.y / (g_px * 12.0) - 0.4, 0.0, 1.0) * j;
         float rowH = g_px * (3.0 + floor(hash(vec2(floor(s.y / (g_px * 28.0)), g_step)) * 22.0));
         float row = floor(s.y / rowH);
         if (hash(vec2(row, g_step)) < 0.55)
-            sp.x += (hash(vec2(row, g_step + 7.0)) - 0.5) * 2.0 * g_px * 140.0 * j;
-        split += g_px * 9.0 * j;
+            sp.x += (hash(vec2(row, g_step + 7.0)) - 0.5) * 2.0 * g_px * 140.0 * tear;
+        split += g_px * 9.0 * tear;
     }
 
     // the blots, joined
@@ -473,12 +487,12 @@ void main() {
     vec2 out_ = vec2(0.0);
     float reach = 0.0;
     bool vein = false;
-    blot(g_h0, g_wa.x, s, v, out_, reach, vein);
-    blot(g_h1, g_wa.y, s, v, out_, reach, vein);
-    blot(g_h2, g_wa.z, s, v, out_, reach, vein);
-    blot(g_h3, g_wb.x, s, v, out_, reach, vein);
-    blot(g_h4, g_wb.y, s, v, out_, reach, vein);
-    blot(g_h5, g_wb.z, s, v, out_, reach, vein);
+    blot(hard(g_h0, g_pa.x), g_wa.x, s, v, out_, reach, vein);
+    blot(hard(g_h1, g_pa.y), g_wa.y, s, v, out_, reach, vein);
+    blot(hard(g_h2, g_pa.z), g_wa.z, s, v, out_, reach, vein);
+    blot(hard(g_h3, g_pb.x), g_wb.x, s, v, out_, reach, vein);
+    blot(hard(g_h4, g_pb.y), g_wb.y, s, v, out_, reach, vein);
+    blot(hard(g_h5, g_pb.z), g_wb.z, s, v, out_, reach, vein);
 
     // around them the picture is pushed aside, wobbling, its colours split and fringed
     float press = 0.0;
@@ -499,19 +513,19 @@ void main() {
     if (press > 0.15)
         col = mix(col, fringeInk(floor(v / (g_px * 4.0))), 0.22 * press);
 
-    stuck(g_h0, g_wa.x, s, v, col);
-    stuck(g_h1, g_wa.y, s, v, col);
-    stuck(g_h2, g_wa.z, s, v, col);
-    stuck(g_h3, g_wb.x, s, v, col);
-    stuck(g_h4, g_wb.y, s, v, col);
-    stuck(g_h5, g_wb.z, s, v, col);
+    stuck(hard(g_h0, g_pa.x), g_wa.x, s, v, col);
+    stuck(hard(g_h1, g_pa.y), g_wa.y, s, v, col);
+    stuck(hard(g_h2, g_pa.z), g_wa.z, s, v, col);
+    stuck(hard(g_h3, g_pb.x), g_wb.x, s, v, col);
+    stuck(hard(g_h4, g_pb.y), g_wb.y, s, v, col);
+    stuck(hard(g_h5, g_pb.z), g_wb.z, s, v, col);
 
-    marks(g_h0, g_wa.x, s, col);
-    marks(g_h1, g_wa.y, s, col);
-    marks(g_h2, g_wa.z, s, col);
-    marks(g_h3, g_wb.x, s, col);
-    marks(g_h4, g_wb.y, s, col);
-    marks(g_h5, g_wb.z, s, col);
+    marks(hard(g_h0, g_pa.x), g_wa.x, s, col);
+    marks(hard(g_h1, g_pa.y), g_wa.y, s, col);
+    marks(hard(g_h2, g_pa.z), g_wa.z, s, col);
+    marks(hard(g_h3, g_pb.x), g_wb.x, s, col);
+    marks(hard(g_h4, g_pb.y), g_wb.y, s, col);
+    marks(hard(g_h5, g_pb.z), g_wb.z, s, col);
 
     // the leaked crystal: black, its own dim sheen here and there; a bright rim where it pushes
     // the rest aside. The pointer under it is gone too.
@@ -532,12 +546,12 @@ void main() {
         }
     }
 
-    cracks(g_h0, g_wa.x, s, v, col);
-    cracks(g_h1, g_wa.y, s, v, col);
-    cracks(g_h2, g_wa.z, s, v, col);
-    cracks(g_h3, g_wb.x, s, v, col);
-    cracks(g_h4, g_wb.y, s, v, col);
-    cracks(g_h5, g_wb.z, s, v, col);
+    cracks(g_h0, g_wa.x, g_pa.x, s, v, col);
+    cracks(g_h1, g_wa.y, g_pa.y, s, v, col);
+    cracks(g_h2, g_wa.z, g_pa.z, s, v, col);
+    cracks(g_h3, g_wb.x, g_pb.x, s, v, col);
+    cracks(g_h4, g_wb.y, g_pb.y, s, v, col);
+    cracks(g_h5, g_wb.z, g_pb.z, s, v, col);
 
     vec4 color = vec4(col, 1.0);
 #if defined(NO_ALPHA)

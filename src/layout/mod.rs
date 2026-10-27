@@ -88,8 +88,9 @@ pub mod tile;
 pub mod workspace;
 
 /// angel-niri (desk_throw.rs): throws `thrown` (window, far; the near ones first) on `ws` one
-/// after another, arriving or `leaving`, each on its own path; their impacts (where and when each
-/// makes its sound) and when the last one sets off.
+/// after another, arriving or `leaving`, each its own way; their sounds (every hit, where, when,
+/// how hard) and when the last one sets off. Arriving, each is moved at once to where it will
+/// stop, its flight drawn from where it stood.
 fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
@@ -98,39 +99,53 @@ fn throw_tiles<W: LayoutElement>(
     now: Duration,
     output: &str,
 ) -> (Vec<niri_ipc::DeskThrow>, Duration) {
-    let view_h = view.h;
     let far: Vec<bool> = thrown.iter().map(|(_, far)| *far).collect();
     let delays = crate::desk_throw::delays(&far, leaving);
     // every throw its own: the same apps fly a little differently next time
     let nonce = crate::utils::get_monotonic_time().as_nanos() as u64;
     let mut hits = Vec::new();
+    let mut moves = Vec::new();
     for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
         let id = tile.window().id().clone();
         let Some(order) = thrown.iter().position(|(win, _)| *win == id) else {
             continue;
         };
         let far = thrown[order].1;
-        let size = tile.animated_tile_size();
         let app = tile.window().app_id().unwrap_or_default();
         let path = crate::desk_throw::Path::new(&app, order, nonce);
         tile.throw(delays[order], leaving, far, pos, view, path);
-        let Some((hit, x)) = tile.fly().map(|fly| fly.hit_in(now, (size.w, size.h))) else {
+        let Some(fly) = tile.fly() else {
             continue;
         };
-        hits.push(niri_ipc::DeskThrow {
+        let off_ms = fly.off_in(now).as_millis() as u64;
+        if fly.shift != (0., 0.) {
+            moves.push((id, fly.shift));
+        }
+        hits.extend(fly.sounds(now).into_iter().map(|s| niri_ipc::DeskThrow {
             output: output.to_owned(),
-            // on the screen, a corner's hit too
-            pos: [
-                (pos.x + x).clamp(24., (view.w - 24.).max(24.)),
-                if leaving { view_h } else { 0. },
-            ],
-            in_ms: hit.as_millis() as u64,
-            off_ms: tile
-                .fly()
-                .map_or(0, |fly| fly.off_in(now).as_millis() as u64),
+            pos: s.pos,
+            in_ms: s.at.as_millis() as u64,
+            off_ms,
             far,
             bottom: leaving,
-        });
+            power: s.power,
+            normal: s.normal,
+            slide: s.slide,
+            launch: s.launch,
+        }));
+    }
+    for (id, (dx, dy)) in moves {
+        if ws.floating().has_window(&id) {
+            ws.move_floating_window(
+                Some(&id),
+                PositionChange::AdjustFixed(dx),
+                PositionChange::AdjustFixed(dy),
+                false,
+            );
+        } else if let Some(tile) = ws.tiles_mut().find(|tile| *tile.window().id() == id) {
+            // not floating: it can't stay where it stopped, so it doesn't fly
+            tile.stop_fly();
+        }
     }
     hits.sort_by_key(|hit| hit.in_ms);
     (hits, delays.last().copied().unwrap_or_default())

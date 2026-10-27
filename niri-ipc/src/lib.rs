@@ -1939,6 +1939,22 @@ pub struct DeskThrow {
     pub far: bool,
     /// The bottom edge (leaving), else the top one (arriving).
     pub bottom: bool,
+    /// How hard, 0…1 (the sound's loudness).
+    #[serde(default = "full_power")]
+    pub power: f64,
+    /// The inward normal of the edge it hits.
+    #[serde(default)]
+    pub normal: [f64; 2],
+    /// Not a hit: the window scraping on after its first.
+    #[serde(default)]
+    pub slide: bool,
+    /// The window's first sound: it sets off at `off_ms` (its whoosh then).
+    #[serde(default)]
+    pub launch: bool,
+}
+
+fn full_power() -> f64 {
+    1.
 }
 
 /// Position- and size-related properties of a [`Window`].

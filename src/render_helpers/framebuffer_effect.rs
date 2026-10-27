@@ -566,7 +566,17 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                     "g_wb",
                     [glitch.swells[3], glitch.swells[4], glitch.swells[5]],
                 ),
-                Uniform::new("g_jolt", [glitch.jolt[0], glitch.jolt[1] * self.scale]),
+                Uniform::new("g_pa", [glitch.power[0], glitch.power[1], glitch.power[2]]),
+                Uniform::new("g_pb", [glitch.power[3], glitch.power[4], glitch.power[5]]),
+                Uniform::new(
+                    "g_jolt",
+                    [
+                        glitch.jolt[0],
+                        glitch.jolt[1] * self.scale,
+                        glitch.jolt[2],
+                        glitch.jolt[3],
+                    ],
+                ),
                 Uniform::new("g_step", glitch.step),
                 Uniform::new("g_px", self.scale),
                 Uniform::new("g_grow", glitch.grow),

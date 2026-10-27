@@ -487,13 +487,34 @@ fn stacking_throws_the_gathered_windows() {
     let fly = flying(&mut f);
     assert!(fly.len() == 2 && fly.contains(&b) && fly.contains(&c));
     let throws = std::mem::take(&mut f.niri().layout.desk_throws);
-    assert_eq!(throws.len(), 2, "every one sounds");
-    let far: Vec<_> = throws.iter().filter(|t| t.far).collect();
-    assert_eq!(far.len(), 1, "only the far one hits hard");
-    assert!(!far[0].bottom);
-    assert_eq!(far[0].pos[1], 0.);
+    let launch: Vec<_> = throws.iter().filter(|t| t.launch).collect();
+    assert_eq!(launch.len(), 2, "every one sets off");
+    assert!(
+        launch.iter().all(|t| !t.bottom && t.pos[1] < 1.),
+        "into the top first"
+    );
+    let hardest = |far: bool| {
+        (throws.iter().filter(|t| t.far == far))
+            .map(|t| t.power)
+            .fold(0., f64::max)
+    };
+    assert!(hardest(true) > hardest(false), "the far one hits harder");
+    // they stay where they stopped, on the screen
+    let before: Vec<_> = (f.niri().layout.active_workspace().unwrap().tiles())
+        .map(|t| t.window().id().clone())
+        .collect();
     f.niri_complete_animations();
     assert!(flying(&mut f).is_empty());
+    let ws = f.niri().layout.active_workspace().unwrap();
+    for (tile, pos, _) in ws.tiles_with_render_positions() {
+        let size = tile.tile_size();
+        assert!(pos.x >= -0.5 && pos.y >= -0.5, "{pos:?}");
+        assert!(
+            pos.x + size.w <= 1920.5 && pos.y + size.h <= 1080.5,
+            "{pos:?}"
+        );
+    }
+    assert_eq!(before.len(), 3);
 
     let (wait, n) = f.niri().layout.throw_out().unwrap();
     assert!(wait <= std::time::Duration::from_millis(1500));

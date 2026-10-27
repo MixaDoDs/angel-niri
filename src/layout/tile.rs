@@ -798,7 +798,12 @@ impl<W: LayoutElement> Tile<W> {
             return;
         }
         let size = self.animated_tile_size();
+        // from where it really is: the move that brought it here (from its desk) goes
+        let rest = rest - self.render_offset();
+        self.stop_move_animations();
         self.hop_anim = None;
+        self.fly = None;
+        let rest = rest + self.render_offset();
         self.fly = Some(crate::desk_throw::Fly::new(
             self.clock.clone(),
             delay,
@@ -1771,9 +1776,9 @@ impl<W: LayoutElement> Tile<W> {
         self.window().set_offscreen_data(None);
 
         let fly_look = (self.fly.as_ref())
-            .map(|fly| (fly.angle(), fly.trail()))
-            .filter(|(angle, trail)| *angle != 0. || !trail.is_empty());
-        if let Some((angle, trail)) = fly_look {
+            .map(|fly| (fly.angle(), fly.trail(), fly.dent()))
+            .filter(|(angle, trail, dent)| *angle != 0. || !trail.is_empty() || dent.is_some());
+        if let Some((angle, trail, dent)) = fly_look {
             let mut ctx = ctx.as_gles();
             let mut elements = Vec::new();
             self.render_inner(
@@ -1795,6 +1800,7 @@ impl<W: LayoutElement> Tile<W> {
                             elem.logical_size(),
                             angle,
                             &trail,
+                            dent,
                             scale,
                             tile_alpha,
                         );
@@ -2063,14 +2069,16 @@ impl<W: LayoutElement> Tile<W> {
 }
 
 /// angel-niri (desk_throw.rs): the tile's offscreen `texture` (at `loc`, `size`) drawn turned by
-/// `angle` in whole pixels of the pixel corners, its afterimages `trail` behind it, in a box with
-/// room for the turn and the trail.
+/// `angle` in whole pixels of the pixel corners, its afterimages `trail` behind it, dented by
+/// `dent` (`Fly::dent`), in a box with room for the turn and the trail.
+#[allow(clippy::too_many_arguments)]
 fn throw_element(
     texture: &GlesTexture,
     loc: Point<f64, Logical>,
     size: Size<f64, Logical>,
     angle: f64,
     trail: &[crate::desk_throw::Ghost],
+    dent: Option<([f32; 4], [f32; 2])>,
     scale: Scale<f64>,
     alpha: f32,
 ) -> ShaderRenderElement {
@@ -2119,6 +2127,8 @@ fn throw_element(
             Uniform::new("throw_ghost0", ghost(0)),
             Uniform::new("throw_ghost1", ghost(1)),
             Uniform::new("throw_ghost2", ghost(2)),
+            Uniform::new("throw_dent", dent.map_or([0.; 4], |d| d.0)),
+            Uniform::new("throw_dent_in", dent.map_or([0., 1.], |d| d.1)),
         ]),
         HashMap::from([(String::from("niri_tex"), texture.clone())]),
         Kind::Unspecified,
