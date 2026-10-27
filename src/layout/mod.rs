@@ -89,7 +89,8 @@ pub mod workspace;
 
 /// angel-niri (desk_throw.rs): throws `thrown` (window, far; the near ones first) on `ws` one
 /// after another, arriving or `leaving`, each its own way; their sounds (every hit, where, when,
-/// how hard) and when the last one sets off. Arriving, each comes back to where it stood.
+/// how hard) and when the last one sets off. Arriving, they are spread about the screen
+/// (`desk_throw::spread`), each flying into its place.
 fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
@@ -102,6 +103,35 @@ fn throw_tiles<W: LayoutElement>(
     let mut delays = crate::desk_throw::delays(if leaving { thrown.len() } else { 0 });
     // every throw its own: the same apps fly a little differently next time
     let nonce = crate::utils::get_monotonic_time().as_nanos() as u64;
+    // arriving, spread about the screen to be handy in the stacking mode, each moved there at
+    // once and thrown from below into its place
+    if !leaving {
+        let mut taken = Vec::new();
+        let mut placing = Vec::new();
+        for (tile, pos, _) in ws.tiles_with_render_positions() {
+            let at = pos - tile.render_offset();
+            let size = tile.tile_size();
+            match order_of(tile.window().id()) {
+                Some(order) => placing.push((order, tile.window().id().clone(), at, size)),
+                None => taken.push([at.x, at.y, size.w, size.h]),
+            }
+        }
+        placing.sort_by_key(|(order, ..)| *order);
+        let area = ws.working_area();
+        let area = [area.loc.x, area.loc.y, area.size.w, area.size.h];
+        let sizes: Vec<_> = placing.iter().map(|(.., s)| (s.w, s.h)).collect();
+        let spots = crate::desk_throw::spread(area, &mut taken, &sizes, nonce);
+        for ((_, id, at, _), spot) in placing.iter().zip(spots) {
+            if ws.floating().has_window(id) {
+                ws.move_floating_window(
+                    Some(id),
+                    PositionChange::AdjustFixed(spot.0 - at.x),
+                    PositionChange::AdjustFixed(spot.1 - at.y),
+                    false,
+                );
+            }
+        }
+    }
     let mut first_hits = vec![0.; thrown.len()];
     for (tile, pos) in ws.tiles_with_render_positions_mut(false) {
         let Some(order) = order_of(tile.window().id()) else {

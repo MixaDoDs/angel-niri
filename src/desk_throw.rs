@@ -1064,6 +1064,72 @@ impl Fly {
     }
 }
 
+/// Arriving, where windows of `sizes` go in `area` (x, y, w, h; logical) so they are handy
+/// there, as a smart placement does: each where it covers the least of `taken` and of the ones
+/// placed before it (added to `taken`); of the nearly best spots the one furthest from the rest,
+/// give or take, so they spread out to the corners and no two throws are alike. Their top lefts.
+pub fn spread(
+    area: [f64; 4],
+    taken: &mut Vec<[f64; 4]>,
+    sizes: &[(f64, f64)],
+    nonce: u64,
+) -> Vec<(f64, f64)> {
+    let [ax, ay, aw, ah] = area;
+    let steps = |from: f64, room: f64| -> Vec<f64> {
+        if room <= 0. {
+            return vec![from + room / 2.];
+        }
+        let n = (room / SPREAD_STEP).ceil() as usize;
+        (0..=n).map(|i| from + room * i as f64 / n as f64).collect()
+    };
+    let cover = |r: [f64; 4], taken: &[[f64; 4]]| -> f64 {
+        (taken.iter())
+            .map(|t| {
+                let w = (r[0] + r[2]).min(t[0] + t[2]) - r[0].max(t[0]);
+                let h = (r[1] + r[3]).min(t[1] + t[3]) - r[1].max(t[1]);
+                w.max(0.) * h.max(0.)
+            })
+            .sum()
+    };
+    let mut out = Vec::with_capacity(sizes.len());
+    for (k, &(w, h)) in sizes.iter().enumerate() {
+        let spots: Vec<_> = (steps(ax, aw - w).into_iter())
+            .flat_map(|x| steps(ay, ah - h).into_iter().map(move |y| [x, y, w, h]))
+            .map(|r| (r, cover(r, taken)))
+            .collect();
+        let least = spots.iter().map(|s| s.1).fold(f64::MAX, f64::min);
+        // the middle of the rest (the area's when none): the further from it the better
+        let mid = if taken.is_empty() {
+            (ax + aw / 2., ay + ah / 2.)
+        } else {
+            let n = taken.len() as f64;
+            (
+                taken.iter().map(|t| t[0] + t[2] / 2.).sum::<f64>() / n,
+                taken.iter().map(|t| t[1] + t[3] / 2.).sum::<f64>() / n,
+            )
+        };
+        let jitter = aw.hypot(ah) * 0.15;
+        let k = k as u64 + 1;
+        let best = (spots.iter())
+            .filter(|s| s.1 <= least + 0.02 * w * h)
+            .enumerate()
+            .map(|(i, s)| {
+                let far = (s.0[0] + w / 2. - mid.0).hypot(s.0[1] + h / 2. - mid.1);
+                let roll = unit(nonce ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ i as u64);
+                (s.0, far + jitter * roll)
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|s| s.0)
+            .unwrap();
+        taken.push(best);
+        out.push((best[0], best[1]));
+    }
+    out
+}
+
+/// `spread` tries spots this far apart, logical px.
+const SPREAD_STEP: f64 = 16.;
+
 /// Leaving: when each of `n` windows sets off, from now: quickly, all of them off within
 /// `SPREAD_MS`.
 pub fn delays(n: usize) -> Vec<Duration> {
@@ -1290,6 +1356,29 @@ mod tests {
         let back = delays(3);
         assert_eq!(back[2], Duration::from_millis(feel().gap_ms * 2));
         assert!(delays(12)[11] <= Duration::from_millis(SPREAD_MS));
+    }
+
+    #[test]
+    fn spread_puts_them_where_they_are_handy() {
+        let area = [0., 0., 1920., 1080.];
+        // small ones on an empty screen: no two cover each other, all on the screen
+        let mut taken = Vec::new();
+        let spots = spread(area, &mut taken, &[(500., 400.); 4], 7);
+        for (i, a) in taken.iter().enumerate() {
+            assert!(a[0] >= 0. && a[1] >= 0. && a[0] + a[2] <= 1920. && a[1] + a[3] <= 1080.);
+            for b in &taken[i + 1..] {
+                let w = (a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0]);
+                let h = (a[1] + a[3]).min(b[1] + b[3]) - a[1].max(b[1]);
+                assert!(w <= 0. || h <= 0., "{spots:?}");
+            }
+        }
+        // big ones round one in the middle: they go aside, not all onto the middle
+        let mut taken = vec![[490., 56., 937., 968.]];
+        let spots = spread(area, &mut taken, &[(940., 968.), (937., 968.)], 3);
+        assert!((spots[0].0 - spots[1].0).abs() > 400., "{spots:?}");
+        for s in &spots {
+            assert!((s.0 - 490.).abs() > 300., "{spots:?}");
+        }
     }
 
     #[test]

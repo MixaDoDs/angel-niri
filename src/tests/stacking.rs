@@ -634,5 +634,20 @@ fn stacking_throws_one_window_at_a_time() {
         );
         assert_eq!(*sizes.last().unwrap(), (w, h), "{k} not back {sizes:?}");
     }
+    // spread about the screen to be handy: none on top of another, all on the screen
+    let ws = f.niri().layout.active_workspace().unwrap();
+    let rects: Vec<_> = (ws.tiles_with_render_positions())
+        .filter(|(tile, _, _)| thrown.contains(&tile.window().window))
+        .map(|(tile, pos, _)| (pos, tile.tile_size()))
+        .collect();
+    assert_eq!(rects.len(), 4);
+    for (i, (a, sa)) in rects.iter().enumerate() {
+        assert!(a.x >= -0.5 && a.y >= -0.5 && a.x + sa.w <= 1920.5 && a.y + sa.h <= 1080.5);
+        for (b, sb) in &rects[i + 1..] {
+            let w = (a.x + sa.w).min(b.x + sb.w) - a.x.max(b.x);
+            let h = (a.y + sa.h).min(b.y + sb.h) - a.y.max(b.y);
+            assert!(w <= 0.5 || h <= 0.5, "{rects:?}");
+        }
+    }
     crate::desk_throw::set(false);
 }
