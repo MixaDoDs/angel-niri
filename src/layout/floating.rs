@@ -1294,7 +1294,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         let active = self.active_window_id.clone();
-        for (tile, tile_pos) in self.tiles_with_render_positions() {
+        // angel-niri (desk_throw.rs): windows in flight go over the rest
+        let (flying, resting): (Vec<_>, Vec<_>) =
+            (self.tiles_with_render_positions()).partition(|(tile, _)| tile.is_flying());
+        for (tile, tile_pos) in flying.into_iter().chain(resting) {
             // Skip tiles belonging to a different render layer.
             let tile_layer = if tile.is_moving_between_workspaces() {
                 RenderLayer::MovingBetweenWorkspaces

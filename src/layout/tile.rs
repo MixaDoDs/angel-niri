@@ -797,6 +797,7 @@ impl<W: LayoutElement> Tile<W> {
         if self.options.animations.window_movement.0.off {
             return;
         }
+        let size = self.animated_tile_size();
         self.hop_anim = None;
         self.fly = Some(crate::desk_throw::Fly::new(
             self.clock.clone(),
@@ -805,8 +806,14 @@ impl<W: LayoutElement> Tile<W> {
             far,
             y,
             view_h,
+            (size.w, size.h),
             path,
         ));
+    }
+
+    /// angel-niri (desk_throw.rs): thrown and not landed yet.
+    pub fn is_flying(&self) -> bool {
+        self.fly.as_ref().is_some_and(|fly| !fly.is_done())
     }
 
     pub fn fly(&self) -> Option<&crate::desk_throw::Fly> {

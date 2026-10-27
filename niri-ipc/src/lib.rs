@@ -1932,6 +1932,9 @@ pub struct DeskThrow {
     pub pos: [f64; 2],
     /// In how many milliseconds from now.
     pub in_ms: u64,
+    /// In how many milliseconds from now it sets off (for its whoosh).
+    #[serde(default)]
+    pub off_ms: u64,
     /// From a desk further than the next one: a hard hit.
     pub far: bool,
     /// The bottom edge (leaving), else the top one (arriving).

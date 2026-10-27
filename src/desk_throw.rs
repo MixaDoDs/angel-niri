@@ -394,13 +394,15 @@ pub struct Fly {
     below: f64,
     /// Up to the output's top edge (far ones arriving).
     top: f64,
+    /// The window's size: it hits with a corner.
+    size: (f64, f64),
     path: Path,
     ghosts: usize,
 }
 
 impl Fly {
     /// A flight starting `delay` from now; `y`: the window's top in its output, `view_h`: the
-    /// output's height; `path`: its own way.
+    /// output's height; `size`: the window's; `path`: its own way.
     pub fn new(
         clock: Clock,
         delay: Duration,
@@ -408,6 +410,7 @@ impl Fly {
         far: bool,
         y: f64,
         view_h: f64,
+        size: (f64, f64),
         path: Path,
     ) -> Self {
         let feel = feel();
@@ -432,6 +435,7 @@ impl Fly {
             far,
             below: view_h - y + MARGIN,
             top: -y,
+            size,
             path,
             ghosts: if far && !leaving {
                 feel.trail_far
@@ -571,8 +575,14 @@ impl Fly {
         }
     }
 
-    /// When it makes its sound, from now, and how far sideways from its place: a far one
-    /// arriving hits the top, a near one knocks into place, a leaving one starts to drop.
+    /// When it sets off, from now.
+    pub fn off_in(&self, now: Duration) -> Duration {
+        self.anim.start_time().saturating_sub(now)
+    }
+
+    /// When it makes its sound, from now, and where from its middle, sideways: a far one
+    /// arriving hits the top with its leading corner (turned, that one is highest), a near one
+    /// knocks into place, a leaving one starts to drop.
     pub fn hit_in(&self, now: Duration) -> (Duration, f64) {
         let t = if self.leaving {
             0.3
@@ -583,7 +593,16 @@ impl Fly {
         };
         let start = self.anim.start_time();
         let at = (start + Duration::from_secs_f64(self.ms * t / 1000.)).saturating_sub(now);
-        (at, self.at(t).0)
+        let mut x = self.at(t).0;
+        if self.far && !self.leaving {
+            // the top corners turned about the middle (as shaders/throw.frag draws it): the higher
+            let (w, h) = (self.size.0 / 2., self.size.1 / 2.);
+            let (sin, cos) = self.angle_at(t).sin_cos();
+            let left = (-w * cos + h * sin, -w * sin - h * cos);
+            let right = (w * cos + h * sin, w * sin - h * cos);
+            x += if left.1 <= right.1 { left.0 } else { right.0 };
+        }
+        (at, x)
     }
 }
 
@@ -665,6 +684,7 @@ mod tests {
             far,
             200.,
             1000.,
+            (400., 300.),
             PATH,
         )
     }
@@ -675,8 +695,9 @@ mod tests {
         assert_eq!(f.at(0.), (-150., 816.));
         assert_eq!(f.at(UP).1, -200.);
         assert_eq!(f.at(1.), (0., 0.));
+        // the turn lifts the left corner: it hits there
         let (_, x) = f.hit_in(Duration::ZERO);
-        assert_eq!(x, -60.);
+        assert!(x < -60. - 150., "{x}");
 
         let near = fly(false, false);
         assert_eq!(near.at(1.), (0., 0.));

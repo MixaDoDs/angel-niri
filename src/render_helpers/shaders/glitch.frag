@@ -29,7 +29,7 @@ uniform float tint;
 // then calm; pieces of the window that hit, stuck where the picture froze at the hit, torn
 // sideways, in fewer shades, settling back in steps. The dead pixels and lines heal first, one by one; a couple of seconds later the blots
 // pull back into their hits. Every hit makes every blot bigger; they heal together. Laid out on the
-// upright screen in physical pixels.
+// upright screen in physical pixels. Over it all the glass is cracked from each hit.
 uniform vec2 tex_size;
 // the frames kept at the hits (desk_throw.rs GlitchFrame::snap), the same way round as tex
 uniform sampler2D g_snap;
@@ -119,9 +119,13 @@ vec2 toTex(vec2 s) {
     return clamp((g_screen_to_tex * vec3(s / g_screen, 1.0)).xy, vec2(0.0), vec2(1.0));
 }
 
-// how much of a blot there is: it spreads in 0.7 s and pulls back over the last BLOT_HEAL s
+// how much of a blot there is: it spreads in 0.7 s and pulls back over the last BLOT_HEAL s, in
+// fits — steps with the stutter, now and then a little back out — not a smooth shrink
 float grown(float age) {
-    float x = min(clamp(age / 0.7, 0.0, 1.0), clamp(g_left / BLOT_HEAL, 0.0, 1.0));
+    float back = clamp(g_left / BLOT_HEAL, 0.0, 1.0);
+    if (back < 1.0)
+        back = clamp(floor(back * 7.0 + hash(vec2(g_step, 4.2)) * 0.9) / 7.0, 0.0, 1.0);
+    float x = min(clamp(age / 0.7, 0.0, 1.0), back);
     return 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x);
 }
 
@@ -211,6 +215,55 @@ void stuck(vec4 h, float w, vec2 s, float v, inout vec3 col) {
     else if (k < 0.16)
         p = vec3(1.0) - p;
     col = p;
+}
+
+// the glass cracked at the hit: jagged rays running into the screen and the web between them,
+// one physical pixel dark with a bright edge where the glass catches the light; they shoot out
+// in the first 0.12 s and go with the blot
+void cracks(vec4 h, float w, vec2 s, inout vec3 col) {
+    if (h.z < 0.0)
+        return;
+    float size = grown(h.z);
+    if (size <= 0.0)
+        return;
+    float seed = h.w;
+    float R = radius(h, w);
+    vec2 d = s - h.xy;
+    float r = length(d);
+    float reach = R * (2.6 + 1.2 * hash(vec2(seed, 7.7))) * size * clamp(h.z / 0.12, 0.0, 1.0);
+    if (r > reach)
+        return;
+    float up = away(h);
+    float a = atan(d.y * up, d.x);
+    float line = 1e5;
+    for (int i = 0; i < 9; i++) {
+        float fi = float(i);
+        float ai = (0.04 + 0.92 * (fi + 0.8 * hash(vec2(seed, fi + 200.0))) / 9.0) * PI;
+        float len = reach * (0.45 + 0.55 * hash(vec2(seed, fi + 220.0)));
+        vec2 dir = vec2(cos(ai), sin(ai) * up);
+        float along = dot(d, dir);
+        if (along <= 0.0 || along > len)
+            continue;
+        float kink = (noise(vec2(along / (g_px * 18.0), fi * 3.1 + seed)) - 0.5) * g_px * 14.0
+            * (along / len + 0.2);
+        float perp = dot(d, vec2(-dir.y, dir.x)) + kink;
+        if (abs(perp) < abs(line))
+            line = perp;
+    }
+    for (int k = 0; k < 3; k++) {
+        float fk = float(k);
+        if (hash(vec2(floor(a / (PI / 9.0)), seed + fk * 13.0)) < 0.45)
+            continue;
+        float rk = reach * (0.18 + 0.22 * fk) * (0.9 + 0.2 * hash(vec2(seed, fk + 240.0)));
+        float dr = r - rk + (noise(vec2(a * 6.0, fk + seed)) - 0.5) * g_px * 10.0;
+        if (abs(dr) < abs(line))
+            line = dr;
+    }
+    float t = abs(line);
+    if (t < g_px * 0.9)
+        col = mix(col, vec3(0.04), 0.85);
+    else if (line > 0.0 && t < g_px * 2.0)
+        col = mix(col, vec3(1.0), 0.45);
 }
 
 // a hit's dead pixels, milky patch and lines
@@ -334,7 +387,13 @@ void main() {
     // the rest aside. The pointer under it is gone too.
     if (reach > 0.0) {
         float rim = g_px * (2.0 + 3.0 * fbm(s / (g_px * 55.0)));
-        if (v < 0.0 || vein) {
+        // healing, the panel resyncs: rows of the picture come back through the black in flashes
+        float healing = 1.0 - clamp(g_left / BLOT_HEAL, 0.0, 1.0);
+        bool resync = healing > 0.0
+            && hash(vec2(floor(s.y / (g_px * 3.0)), g_step + 9.0)) < 0.4 * healing;
+        if (resync && (v < 0.0 || vein)) {
+            col = min(col * 1.25, vec3(1.0));
+        } else if (v < 0.0 || vein) {
             col = vec3(0.0);
             if (v < 0.0 && hash(floor(s / (g_px * 2.0)) + 0.37) > 0.992)
                 col = vec3(0.16, 0.05, 0.3);
@@ -342,6 +401,13 @@ void main() {
             col = mix(col, vec3(0.85, 0.75, 1.0), 0.75);
         }
     }
+
+    cracks(g_h0, g_wa.x, s, col);
+    cracks(g_h1, g_wa.y, s, col);
+    cracks(g_h2, g_wa.z, s, col);
+    cracks(g_h3, g_wb.x, s, col);
+    cracks(g_h4, g_wb.y, s, col);
+    cracks(g_h5, g_wb.z, s, col);
 
     vec4 color = vec4(col, 1.0);
 #if defined(NO_ALPHA)

@@ -94,10 +94,11 @@ fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
     leaving: bool,
-    view_h: f64,
+    view: Size<f64, Logical>,
     now: Duration,
     output: &str,
 ) -> (Vec<niri_ipc::DeskThrow>, Duration) {
+    let view_h = view.h;
     let far: Vec<bool> = thrown.iter().map(|(_, far)| *far).collect();
     let delays = crate::desk_throw::delays(&far, leaving);
     // every throw its own: the same apps fly a little differently next time
@@ -118,8 +119,15 @@ fn throw_tiles<W: LayoutElement>(
         };
         hits.push(niri_ipc::DeskThrow {
             output: output.to_owned(),
-            pos: [pos.x + size.w / 2. + x, if leaving { view_h } else { 0. }],
+            // on the screen, a corner's hit too
+            pos: [
+                (pos.x + size.w / 2. + x).clamp(24., (view.w - 24.).max(24.)),
+                if leaving { view_h } else { 0. },
+            ],
             in_ms: hit.as_millis() as u64,
+            off_ms: tile
+                .fly()
+                .map_or(0, |fly| fly.off_in(now).as_millis() as u64),
             far,
             bottom: leaving,
         });
@@ -5636,9 +5644,9 @@ impl<W: LayoutElement> Layout<W> {
             if throw && !thrown.is_empty() {
                 thrown.sort_by_key(|(_, far)| *far);
                 let output = mon.output_name().clone();
-                let view_h = mon.view_size().h;
+                let view = mon.view_size();
                 let (hits, _) =
-                    throw_tiles(&mut mon.workspaces[0], &thrown, false, view_h, now, &output);
+                    throw_tiles(&mut mon.workspaces[0], &thrown, false, view, now, &output);
                 self.desk_throws.extend(hits);
             }
             if shown != 0 {
@@ -5687,12 +5695,12 @@ impl<W: LayoutElement> Layout<W> {
             }
             thrown.sort_by_key(|(_, far)| *far);
             let output = mon.output_name().clone();
-            let view_h = mon.view_size().h;
+            let view = mon.view_size();
             let (hits, last) = throw_tiles(
                 &mut mon.workspaces[shown],
                 &thrown,
                 true,
-                view_h,
+                view,
                 now,
                 &output,
             );
