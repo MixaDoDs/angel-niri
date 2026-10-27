@@ -4,7 +4,7 @@
 //! freeze and shake, and how big and long the break is (`Feel`); calm breaks nothing.
 //! - Starting, the windows gathered from desks 2…N onto desk 1 fly up from below its output, each
 //!   on a way of its own (`Path`, `Fly::new`): from below or in from a side, along a curve of its
-//!   own bends, its own pace, turn and bank, now and then a whole spin; its app gives it a manner,
+//!   own bends, its own pace, lean and bank; its app gives it a manner,
 //!   every throw shakes it up. From the next desk they come quickly and land with a knock
 //!   (a shake); from desks further away they come one by one, well apart, slam into the top of
 //!   the output (a freeze at the hit, the screen jolting), straighten and drop into their places.
@@ -62,8 +62,8 @@ pub struct Feel {
 
 const FEELS: [Feel; 3] = [
     Feel {
-        near_gap_ms: 70,
-        far_gap_ms: 220,
+        near_gap_ms: 90,
+        far_gap_ms: 300,
         near_ms: 420,
         far_ms: 560,
         damage: false,
@@ -75,29 +75,29 @@ const FEELS: [Feel; 3] = [
         shake: 0.,
     },
     Feel {
-        near_gap_ms: 110,
-        far_gap_ms: 480,
-        near_ms: 440,
-        far_ms: 600,
+        near_gap_ms: 300,
+        far_gap_ms: 900,
+        near_ms: 520,
+        far_ms: 700,
         damage: true,
         life_ms: 8500.,
         blot: 1.,
         trail_far: 2,
         trail_near: 0,
-        hit_stop_ms: 55,
+        hit_stop_ms: 90,
         shake: 6.,
     },
     Feel {
-        near_gap_ms: 160,
-        far_gap_ms: 720,
-        near_ms: 460,
-        far_ms: 640,
+        near_gap_ms: 450,
+        far_gap_ms: 1300,
+        near_ms: 560,
+        far_ms: 760,
         damage: true,
         life_ms: 11000.,
         blot: 1.15,
         trail_far: 3,
         trail_near: 2,
-        hit_stop_ms: 95,
+        hit_stop_ms: 140,
         shake: 12.,
     },
 ];
@@ -317,7 +317,7 @@ const GHOST_ALPHA: [f32; 3] = [0.5, 0.3, 0.16];
 /// A window's own way of flying: twelve rolls, each part its app's liking and part this throw's
 /// chance (so an app keeps a manner, yet no two throws are alike). `Fly::new` makes a way out of
 /// them: where it comes from (below, or in from a side), the bends of its curve, its pace, how far
-/// it turns and banks, now and then a whole spin.
+/// it leans and banks.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Path {
     pub r: [f64; 12],
@@ -407,10 +407,9 @@ pub struct Fly {
     /// past the bottom.
     way: [(f64, f64); 4],
     /// The turn it hits with (far) or sets off with (near), radians; how much it banks in its
-    /// bends; whole spins on the way.
+    /// bends.
     spin: f64,
     bank: f64,
-    spins: f64,
     /// Leaving: the hop up before the drop.
     hop: f64,
     ghosts: usize,
@@ -450,13 +449,9 @@ impl Fly {
         let left = r[1] < 0.5;
         // the turn: from barely to hard, mostly leaning the way it travels
         let lean = if left { 1. } else { -1. } * if r[8] < 0.2 { -1. } else { 1. };
-        let spin = lean * (0.03 + 0.25 * r[6] * r[6] + 0.06 * r[7]);
-        let bank = (r[10] * 2. - 1.) * 0.22;
-        let spins = if far && !leaving && r[11] > 0.86 {
-            lean
-        } else {
-            0.
-        };
+        // a lean, not a spin (whole turns and hard banks read as a toy, 27.10)
+        let spin = lean * (0.025 + 0.07 * r[6] + 0.03 * r[7]);
+        let bank = (r[10] * 2. - 1.) * 0.06;
 
         // screen points (the window's top left), then offsets from its rest
         let below = vh + MARGIN;
@@ -513,7 +508,6 @@ impl Fly {
             way: [off(from), off(c1), off(c2), off(to)],
             spin,
             bank,
-            spins,
             hop: 14. + 22. * r[7],
             ghosts: if far && !leaving {
                 feel.trail_far
@@ -593,18 +587,16 @@ impl Fly {
         }
         let tau = std::f64::consts::TAU;
         if self.leaving {
-            return -self.spin * t * 1.5 + self.bank * (t * std::f64::consts::PI).sin();
+            return -self.spin * t + self.bank * (t * std::f64::consts::PI).sin();
         }
         if !self.far {
             let e = 1. - t;
-            return self.spin * 1.4 * e * e + self.bank * (t * std::f64::consts::PI).sin() * e;
+            return self.spin * e * e + self.bank * (t * std::f64::consts::PI).sin() * e;
         }
         if t < UP {
             let s = t / UP;
-            // the turn it hits with, banking in its bends, a whole spin for some
-            self.spin * s.powf(0.8)
-                + self.bank * (s * std::f64::consts::PI).sin()
-                + self.spins * tau * (1. - (1. - s) * (1. - s))
+            // the turn it hits with, banking a little in its bends
+            self.spin * s.powf(0.8) + self.bank * (s * std::f64::consts::PI).sin()
         } else {
             // straightens at the hit, swinging back once
             let s = (t - UP) / (1. - UP);
