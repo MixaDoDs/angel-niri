@@ -178,6 +178,7 @@ pub fn glitch(
     if !feel().damage || power < CRACK {
         return;
     }
+    let power = damage(power, normal);
     GLITCHES.with_borrow_mut(|all| {
         let start = now + delay;
         let mine = all.iter().filter(|g| g.output == output).count();
@@ -204,6 +205,16 @@ pub fn glitch(
             swells: Vec::new(),
         });
     });
+}
+
+/// How hard a hit into the wall of inward `normal` breaks the glass: only the top leaks a blot,
+/// the other edges (bounces off them) just crack it.
+fn damage(power: f64, normal: [f64; 2]) -> f64 {
+    if normal[1] > 0.5 {
+        power
+    } else {
+        power.min(BLOT - 0.01)
+    }
 }
 
 /// Every hit on `output`, blots and swells: when, how hard, which way, where.
@@ -781,7 +792,8 @@ impl Fly {
                     hold,
                     if first {
                         feel.hit_stop_ms as f64 * if self.far { 1. } else { 0.5 }
-                    } else if power > BLOT {
+                    } else if power > BLOT && normal.1 > 0.5 {
+                        // the top only, as its blot
                         35.
                     } else {
                         0.
@@ -1219,6 +1231,16 @@ mod tests {
         let back = delays(3);
         assert_eq!(back[2], Duration::from_millis(feel().gap_ms * 2));
         assert!(delays(12)[11] <= Duration::from_millis(SPREAD_MS));
+    }
+
+    #[test]
+    fn only_the_top_leaks_a_blot_the_other_edges_crack() {
+        assert_eq!(damage(1., [0., 1.]), 1.);
+        for normal in [[0., -1.], [1., 0.], [-1., 0.]] {
+            assert!(damage(1., normal) < BLOT);
+            assert!(damage(1., normal) >= CRACK);
+            assert_eq!(damage(0.3, normal), 0.3);
+        }
     }
 
     #[test]
