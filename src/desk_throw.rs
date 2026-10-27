@@ -4,12 +4,13 @@
 //! freeze and shake, and how big and long the break is (`Feel`); calm breaks nothing.
 //! - Starting, the windows gathered from desks 2…N onto desk 1 are thrown about it, the screen a
 //!   table seen from above and its edges walls (`Fly::arrive`, worked out ahead): one after
-//!   another each ducks where it stood and shoots off upwards, give or take, speeding up into the
-//!   top edge — no slowing before it — freezes at the hit, bounces off and slides on, braking,
-//!   off every edge it meets, and stays wherever it stops (till stacking ends). Never off the
-//!   screen, never a jump: the layout moves it there at once and draws the flight from where it
-//!   stood. Its app gives it a manner (`Path`), every throw shakes it up; from desks further away
-//!   they go harder. Where it hit hardest it is dented a while, straightening in steps.
+//!   another, the pauses growing (`arrivals`), each comes up from below the screen speeding up
+//!   into the top edge — no slowing before it — freezes at the hit, bounces off hard, off every
+//!   edge it meets, hops once or twice and comes back to where it stood. Its app gives it a
+//!   manner (`Path`), every throw shakes it up; from desks further away they go harder. At every
+//!   hit that cracks it is crushed for real (`Fly::squash`: the window resized, squashed along
+//!   the hit and stretched back); where it hit hardest it is dented a while, straightening in
+//!   steps.
 //! - Ending, the gathered windows still on desk 1 drop off the bottom before they go back to their
 //!   desks. No damage then.
 //! Every wall it hits sounds, as hard as it hit (`Event::DesksThrown`, also its slide and
@@ -183,10 +184,30 @@ pub fn glitch(
         let start = now + delay;
         let mine = all.iter().filter(|g| g.output == output).count();
         if mine >= SPOTS {
-            // no room of its own: a hard one swells the nearest, they run together anyway
             if power < BLOT {
                 return;
             }
+            // no room of its own: a hard one takes the place of the weakest crack (a bounce's,
+            // so a late window's hit still breaks the glass anew)
+            let weakest = (all.iter().enumerate())
+                .filter(|(_, g)| g.output == output && g.power < BLOT && g.swells.is_empty())
+                .min_by(|a, b| a.1.power.total_cmp(&b.1.power))
+                .map(|(i, _)| i);
+            if let Some(i) = weakest {
+                all.remove(i);
+                let seed = (start.as_millis() % 9973) as f64 * 0.618;
+                all.push(Glitch {
+                    output: output.to_owned(),
+                    pos,
+                    start,
+                    power,
+                    normal,
+                    seed,
+                    swells: Vec::new(),
+                });
+                return;
+            }
+            // else it swells the nearest, they run together anyway
             let dist = |g: &Glitch| (g.pos[0] - pos[0]).hypot(g.pos[1] - pos[1]);
             let nearest = (all.iter_mut().filter(|g| g.output == output))
                 .min_by(|a, b| dist(a).total_cmp(&dist(b)))
@@ -357,8 +378,16 @@ const BELOW: f64 = 8.;
 /// set off: it hits at its fastest.
 const BOOST: f64 = 2600.;
 const TOP_SPEED: f64 = 1.45;
-/// Sliding after it, it brakes: a share of its speed each second (`Fly::arrive`) and this, px/s².
-const BRAKE: f64 = 260.;
+/// After its first hit it bounces free this long, ms, then a spring (`HOME_K`, `HOME_D`) takes
+/// it back to where it stood, hopping on the way.
+const BOUNCE_MS: f64 = 260.;
+const HOME_K: f64 = 90.;
+const HOME_D: f64 = 9.5;
+/// Going home it is never faster than this, px/s (far from home the spring would fling it).
+const HOME_MAX: f64 = 2200.;
+/// A window crushed by a hit for real (resized): squashed this long, ms, then stretched back as
+/// long, then its own size again.
+const SQUASH_MS: f64 = 90.;
 /// Slower than this (px/s) it has stopped.
 const STOP: f64 = 22.;
 /// Into a wall this fast (px/s) is a hit of power 1; slower than `QUIET` makes no sound.
@@ -378,7 +407,7 @@ const LONGEST_MS: f64 = 3200.;
 
 /// A window's own way of flying: twelve rolls, each part its app's liking and part this throw's
 /// chance (so an app keeps a manner, yet no two throws are alike). `Fly::new` makes a flight out
-/// of them: which way it sets off, how fast, how it leans, how springy and slippery it is.
+/// of them: which way it sets off, how fast, how it leans, how springy it is, how it hops.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Path {
     pub r: [f64; 12],
@@ -496,10 +525,9 @@ struct Dent {
 /// One window's flight; offsets are from where it comes to rest.
 ///
 /// Arriving, it is worked out ahead (`arrive`): on the screen as a table seen from above, the
-/// window ducks, sets off from where it stood, speeds up into the top edge, freezes at the hit,
-/// bounces off it and slides on, braking, off every edge it meets, and stops wherever it gets to
-/// (the layout moves it there at once, `shift`; the flight is drawn from where it stood). It
-/// never leaves the screen. Leaving, it hops and drops off the bottom along a curve.
+/// window comes up from below, speeds up into the top edge, freezes at the hit, bounces off it
+/// hard, off every edge it meets, hops and comes back to where it stood; once in, it never leaves
+/// the screen. Leaving, it hops and drops off the bottom along a curve.
 #[derive(Debug)]
 pub struct Fly {
     anim: Animation,
@@ -514,8 +542,6 @@ pub struct Fly {
     launch: f64,
     slide: Option<(f64, f64)>,
     dent: Option<Dent>,
-    /// Arriving: where it comes to rest, from where it stood.
-    pub shift: (f64, f64),
     /// Leaving: its way down past the bottom, its lean and bank, the hop up before the drop.
     way: [(f64, f64); 4],
     spin: f64,
@@ -552,7 +578,6 @@ impl Fly {
             launch: 0.,
             slide: None,
             dent: None,
-            shift: (0., 0.),
             way: [(0., 0.); 4],
             spin: 0.,
             bank: 0.,
@@ -635,9 +660,18 @@ impl Fly {
             feel.near_speed
         } * (0.88 + 0.24 * r[9]);
         let mut v = (tilt.sin() * speed, -tilt.cos() * speed);
-        // how springy its first hit is, how slippery it is after
-        let first_bounce = 0.3 + 0.3 * r[3];
-        let slip = 1.0 + 1.6 * r[4];
+        // how springy its first hit is; it comes back to where it stood, hopping once or twice
+        let first_bounce = 0.55 + 0.25 * r[3];
+        let home = (self.rest.0 + w / 2., self.rest.1 + h / 2.);
+        let hops = [
+            BOUNCE_MS + 150. + 250. * r[8],
+            if r[7] > 0.45 {
+                BOUNCE_MS + 480. + 200. * r[5]
+            } else {
+                f64::MAX
+            },
+        ];
+        let mut hopped = 0;
         // and which way, how hard the top throws it aside (it hit with a corner)
         let glance = if r[10] < 0.5 { -1. } else { 1. } * (0.2 + 0.5 * r[11]);
 
@@ -671,12 +705,21 @@ impl Fly {
                     v = (v.0 * k, v.1 * k);
                 }
             } else {
-                // braked harder and harder past `SLIDE_MS`: the show stays short
-                let grip = slip + 10. * ((since - SLIDE_MS) / 1000.).max(0.);
-                let k = (-grip * dt).exp();
-                let s2 = (s * k - BRAKE * dt).max(0.);
-                let k = if s > 0. { s2 / s } else { 0. };
-                v = (v.0 * k, v.1 * k);
+                // free a while, then drawn home on a spring, more and more
+                let pull = ((since - BOUNCE_MS) / 200.).clamp(0., 1.);
+                v.0 += pull * (HOME_K * (home.0 - c.0) - HOME_D * v.0) * dt;
+                v.1 += pull * (HOME_K * (home.1 - c.1) - HOME_D * v.1) * dt;
+                let s = v.0.hypot(v.1);
+                if pull > 0. && s > HOME_MAX {
+                    v = (v.0 * HOME_MAX / s, v.1 * HOME_MAX / s);
+                }
+                // a hop now and then, mostly up, aside at random
+                if hopped < hops.len() && since >= hops[hopped] {
+                    let k = hopped as f64 + 1.;
+                    v.1 -= 600. + 500. * unit((r[5] * 1e6) as u64 ^ k as u64);
+                    v.0 += (unit((r[6] * 1e6) as u64 ^ (k as u64 * 7)) * 2. - 1.) * 450.;
+                    hopped += 1;
+                }
             }
             // its lean, on a spring: into its way until the hit, flat after
             let target = if hit.is_none() { lean } else { 0. };
@@ -684,29 +727,20 @@ impl Fly {
             spin += (-stiff * (a - target) - 9. * spin) * dt;
             a = (a + spin * dt).clamp(-0.4, 0.4);
             let (hx, hy) = half(size, a);
-            // out there after its hit, it is drawn in
-            if hit.is_some() {
-                let push = |p: f64, half: f64, len: f64| {
-                    if p - half < 0. {
-                        1.
-                    } else if p + half > len {
-                        -1.
-                    } else {
-                        0.
-                    }
-                };
-                v.0 += push(c.0, hx, vw) * 900. * dt;
-                v.1 += push(c.1, hy, vh) * 900. * dt;
-            }
             c = (c.0 + v.0 * dt, c.1 + v.1 * dt);
-            // the walls close in behind it as it comes in
+            // the walls close in behind it as it comes in; where it stood is always inside them
             let room = [(hy, vh - hy), (hx, vw - hx)];
             let mut walls = room;
-            for (k, p) in [c.1, c.0].into_iter().enumerate() {
+            let flat = [(h / 2., vh - h / 2.), (w / 2., vw - w / 2.)];
+            for (k, (p, home)) in [(c.1, home.1), (c.0, home.0)].into_iter().enumerate() {
                 let (lo, hi) = room[k];
                 slack[k].0 = slack[k].0.min((lo - p).max(0.));
                 slack[k].1 = slack[k].1.min((p - hi).max(0.));
-                walls[k] = (lo - slack[k].0, hi + slack[k].1);
+                let (lo, hi) = (lo - slack[k].0, hi + slack[k].1);
+                // standing partly off the screen, it may go back out there
+                let lo = if home < flat[k].0 { lo.min(home) } else { lo };
+                let hi = if home > flat[k].1 { hi.max(home) } else { hi };
+                walls[k] = (lo, hi);
             }
             let corners = [
                 (-w / 2., -h / 2.),
@@ -812,20 +846,29 @@ impl Fly {
             poses.extend(std::iter::repeat_n(pose, n));
             t += SIM_MS * (1 + n) as f64;
 
+            let home_in = (c.0 - home.0).hypot(c.1 - home.1) < 1.5;
             let still = v.0.hypot(v.1) < STOP && a.abs() < 0.003 && spin.abs() < 0.05;
-            if (hit.is_some() && still) || t > LONGEST_MS {
+            let hops_done = hopped == hops.len() || hops[hopped] == f64::MAX;
+            if (hit.is_some() && hops_done && still && home_in) || t > LONGEST_MS {
                 break;
             }
         }
+        // not quite home by then: the rest of the way, quickly
+        let (fx, fy, fa) = *poses.last().unwrap();
+        let n = 24;
+        for i in 1..=n {
+            let k = i as f64 / n as f64;
+            let e = k * k * (3. - 2. * k);
+            poses.push((lerp(fx, home.0, e), lerp(fy, home.1, e), lerp(fa, 0., e)));
+        }
 
-        // at rest: flat, where it got to; everything from there
-        let end = (c.0 - w / 2., c.1 - h / 2.);
+        // at rest: flat, where it stood; everything from there
+        let end = self.rest;
         self.poses = poses
             .into_iter()
             .map(|(x, y, a)| (x - w / 2. - end.0, y - h / 2. - end.1, a))
             .chain(std::iter::once((0., 0., 0.)))
             .collect();
-        self.shift = (end.0 - self.rest.0, end.1 - self.rest.1);
         self.contacts = contacts;
         self.slide = slide;
         self.dent = dent;
@@ -837,6 +880,30 @@ impl Fly {
 
     pub fn is_done(&self) -> bool {
         self.anim.is_done()
+    }
+
+    /// Arriving, how its window is crushed for real right now (resized): its width and height
+    /// times these, at a hit hard enough to crack — squashed along the hit, then stretched back;
+    /// none between.
+    pub fn squash(&self) -> Option<(f64, f64)> {
+        if self.leaving {
+            return None;
+        }
+        let at = self.elapsed();
+        let c = (self.contacts.iter().rev())
+            .find(|c| c.at <= at && c.power >= CRACK)
+            .filter(|c| at < c.at + 2. * SQUASH_MS)?;
+        let p = c.power;
+        let (along, across) = if at < c.at + SQUASH_MS {
+            (1. - 0.22 * p, 1. + 0.1 * p)
+        } else {
+            (1. + 0.08 * p, 1. - 0.04 * p)
+        };
+        Some(if c.normal.1 != 0. {
+            (across, along)
+        } else {
+            (along, across)
+        })
     }
 
     /// How far into its flight it first hits (or ends), ms.
@@ -1067,14 +1134,13 @@ mod tests {
     }
 
     #[test]
-    fn it_comes_up_from_below_stays_on_the_screen_and_stops_anywhere() {
-        let mut ends = Vec::new();
+    fn it_comes_up_from_below_bounces_hard_and_comes_back_where_it_stood() {
         for i in 0..40 {
             let rest = ((100 + 37 * i) as f64 % 1500., (i * 61 % 700) as f64);
             let far = i % 2 == 0;
             let f = fly_at(false, far, rest, Path::new("kitty", i, i as u64 * 977).r);
             // from below the screen, out of sight
-            let end = (rest.0 + f.shift.0, rest.1 + f.shift.1);
+            let end = rest;
             let (_, y, _) = f.pose(0.);
             assert!(end.1 + y >= VIEW.1, "{i}");
             assert_eq!(f.pose(f.ms + 1.), (0., 0., 0.));
@@ -1097,20 +1163,17 @@ mod tests {
             let first = f.contacts[0];
             assert_eq!(first.normal, (0., 1.), "{i}");
             assert!(first.pos.1 < 1.);
+            // a hard bounce: well down off the top before it goes home
+            let k = (first.at / SIM_MS).round() as usize;
+            let low = f.poses[k..]
+                .iter()
+                .map(|p| end.1 + p.1)
+                .fold(f64::MIN, f64::max);
+            assert!(low > 150., "{i} {low}");
             // done within the show (the dent heals after, standing)
-            assert!(f.poses.len() as f64 * SIM_MS <= 2600., "{i} {}", f.ms);
-            assert!(f.ms <= 3200., "{i} {}", f.ms);
-            ends.push(end);
+            assert!(f.poses.len() as f64 * SIM_MS <= 3400., "{i} {}", f.ms);
+            assert!(f.ms <= 3400., "{i} {}", f.ms);
         }
-        // anywhere: they don't all end up in one spot
-        let spread = |k: fn(&(f64, f64)) -> f64| {
-            let (lo, hi) = (
-                ends.iter().map(k).fold(f64::MAX, f64::min),
-                ends.iter().map(k).fold(f64::MIN, f64::max),
-            );
-            hi - lo
-        };
-        assert!(spread(|e| e.0) > 600. && spread(|e| e.1) > 300.);
     }
 
     #[test]
@@ -1120,18 +1183,14 @@ mod tests {
             .enumerate()
         {
             let f = fly_at(false, true, rest, Path::new("kitty", i, 3).r);
-            for w in f.poses.windows(2) {
-                assert!((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) < 20., "{i}");
+            for (k, w) in f.poses.windows(2).enumerate() {
+                let step = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+                assert!(step < 20., "{i} {k}/{} {step} {:?}", f.poses.len(), w);
             }
-            let end = (rest.0 + f.shift.0, rest.1 + f.shift.1);
-            assert!(
-                end.0 >= -0.5 && end.0 + SIZE.0 <= VIEW.0 + 0.5,
-                "{i} {end:?}"
-            );
-            assert!(
-                end.1 >= -0.5 && end.1 + SIZE.1 <= VIEW.1 + 0.5,
-                "{i} {end:?}"
-            );
+            // back where it stood, partly off as it was
+            assert_eq!(f.pose(f.ms + 1.), (0., 0., 0.), "{i}");
+            let last = f.poses[f.poses.len() - 2];
+            assert!(last.0.hypot(last.1) < 20., "{i} {last:?}");
         }
     }
 

@@ -43,7 +43,8 @@ use crate::render_helpers::{RenderCtx, RenderTarget};
 use crate::stacking_title::{self, FramePart, TitleBar, TITLE_HEIGHT};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
-    baba_is_float_offset, round_logical_in_physical, round_logical_in_physical_max1,
+    baba_is_float_offset, ensure_min_max_size, round_logical_in_physical,
+    round_logical_in_physical_max1,
 };
 use crate::window_throw::{self, Hit, Wobble};
 
@@ -141,6 +142,9 @@ pub struct Tile<W: LayoutElement> {
     hop_anim: Option<Animation>,
     /// angel-niri (desk_throw.rs): thrown onto desk 1 or back off it as stacking starts or ends.
     fly: Option<crate::desk_throw::Fly>,
+    /// angel-niri (desk_throw.rs): crushed by a hit for real: the window's own size to go back
+    /// to, the size last asked for.
+    desk_squash: Option<(Size<i32, Logical>, Size<i32, Logical>)>,
     shade_seen: bool,
 
     /// Snapshot of the last render for use in the close animation.
@@ -272,6 +276,7 @@ impl<W: LayoutElement> Tile<W> {
             shade_anim: None,
             hop_anim: None,
             fly: None,
+            desk_squash: None,
             shade_seen: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
@@ -501,6 +506,7 @@ impl<W: LayoutElement> Tile<W> {
         if self.fly.as_ref().is_some_and(|f| f.is_done() && !f.leaving) {
             self.fly = None;
         }
+        self.squash_for_real();
 
         if let Some(open) = &mut self.open_animation {
             if open.is_done() {
@@ -814,6 +820,34 @@ impl<W: LayoutElement> Tile<W> {
             (view.w, view.h),
             path,
         ));
+    }
+
+    /// angel-niri (desk_throw.rs): crushed by a hit for real — the window asked to take the
+    /// squashed size (`Fly::squash`), then its own again.
+    fn squash_for_real(&mut self) {
+        let scale = self.fly.as_ref().and_then(|fly| fly.squash());
+        match (scale, self.desk_squash) {
+            (Some((sx, sy)), squash) => {
+                let own = squash.map(|(own, _)| own).unwrap_or_else(|| {
+                    let win = self.window();
+                    win.expected_size().unwrap_or_else(|| win.size())
+                });
+                let (min, max) = (self.window().min_size(), self.window().max_size());
+                let size = Size::from((
+                    ensure_min_max_size((f64::from(own.w) * sx).round() as i32, min.w, max.w),
+                    ensure_min_max_size((f64::from(own.h) * sy).round() as i32, min.h, max.h),
+                ));
+                if squash.is_none_or(|(_, sent)| sent != size) {
+                    self.window_mut().request_size_once(size, false);
+                }
+                self.desk_squash = Some((own, size));
+            }
+            (None, Some((own, _))) => {
+                self.window_mut().request_size_once(own, false);
+                self.desk_squash = None;
+            }
+            (None, None) => (),
+        }
     }
 
     /// angel-niri (desk_throw.rs): thrown and not landed yet.

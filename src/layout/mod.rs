@@ -89,8 +89,7 @@ pub mod workspace;
 
 /// angel-niri (desk_throw.rs): throws `thrown` (window, far; the near ones first) on `ws` one
 /// after another, arriving or `leaving`, each its own way; their sounds (every hit, where, when,
-/// how hard) and when the last one sets off. Arriving, each is moved at once to where it will
-/// stop, its flight drawn from where it stood.
+/// how hard) and when the last one sets off. Arriving, each comes back to where it stood.
 fn throw_tiles<W: LayoutElement>(
     ws: &mut Workspace<W>,
     thrown: &[(W::Id, bool)],
@@ -127,7 +126,6 @@ fn throw_tiles<W: LayoutElement>(
         }
     }
     let mut hits = Vec::new();
-    let mut moves = Vec::new();
     for tile in ws.tiles() {
         let id = tile.window().id().clone();
         let Some(order) = order_of(&id) else {
@@ -138,9 +136,6 @@ fn throw_tiles<W: LayoutElement>(
             continue;
         };
         let off_ms = fly.off_in(now).as_millis() as u64;
-        if fly.shift != (0., 0.) {
-            moves.push((id, fly.shift));
-        }
         hits.extend(fly.sounds(now).into_iter().map(|s| niri_ipc::DeskThrow {
             output: output.to_owned(),
             pos: s.pos,
@@ -153,19 +148,6 @@ fn throw_tiles<W: LayoutElement>(
             slide: s.slide,
             launch: s.launch,
         }));
-    }
-    for (id, (dx, dy)) in moves {
-        if ws.floating().has_window(&id) {
-            ws.move_floating_window(
-                Some(&id),
-                PositionChange::AdjustFixed(dx),
-                PositionChange::AdjustFixed(dy),
-                false,
-            );
-        } else if let Some(tile) = ws.tiles_mut().find(|tile| *tile.window().id() == id) {
-            // not floating: it can't stay where it stopped, so it doesn't fly
-            tile.stop_fly();
-        }
     }
     hits.sort_by_key(|hit| hit.in_ms);
     (hits, delays.last().copied().unwrap_or_default())

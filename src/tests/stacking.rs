@@ -546,8 +546,10 @@ fn stacking_throws_one_window_at_a_time() {
     let id = f.add_client();
     let _a = open(&mut f, id, 100, 100);
     let mut thrown = Vec::new();
+    let mut surfaces = Vec::new();
     for desk in [1, 1, 2, 3] {
-        let win = open(&mut f, id, 300, 200);
+        let (win, surface) = open_surface(&mut f, id, 300, 200);
+        surfaces.push(surface);
         f.niri()
             .layout
             .move_to_workspace(Some(&win), desk, ActivateWindow::No);
@@ -602,6 +604,35 @@ fn stacking_throws_one_window_at_a_time() {
     for (k, off) in offs.iter().enumerate() {
         set_time(&mut f, off + 40);
         assert_eq!(in_sight(&mut f), k + 1, "{k} at {off}");
+    }
+    // crushed for real at each hit: the window is asked to be squashed (lower, wider) and then
+    // its own size again, every client acking and committing as it goes
+    let mut sizes: Vec<Vec<(i32, i32)>> = vec![Vec::new(); surfaces.len()];
+    let step = |f: &mut Fixture, sizes: &mut Vec<Vec<(i32, i32)>>, ms: u64| {
+        set_time(f, ms);
+        f.niri().advance_animations();
+        f.niri().layout.refresh(true);
+        f.double_roundtrip(id);
+        for (k, surface) in surfaces.iter().enumerate() {
+            let win = f.client(id).window(surface);
+            let new: Vec<_> = win.recent_configures().map(|c| c.size).collect();
+            if !new.is_empty() {
+                win.ack_last_and_commit();
+            }
+            sizes[k].extend(new);
+        }
+        f.double_roundtrip(id);
+    };
+    for ms in (0..hits_sorted[3] + 3000).step_by(20) {
+        step(&mut f, &mut sizes, ms);
+    }
+    for (k, sizes) in sizes.iter().enumerate() {
+        let (w, h) = (300, 200);
+        assert!(
+            sizes.iter().any(|&(sw, sh)| sh < h && sw > w),
+            "{k} never squashed {sizes:?}"
+        );
+        assert_eq!(*sizes.last().unwrap(), (w, h), "{k} not back {sizes:?}");
     }
     crate::desk_throw::set(false);
 }
