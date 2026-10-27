@@ -50,6 +50,8 @@ use self::resize_grab::ResizeGrab;
 use self::spatial_movement_grab::SpatialMovementGrab;
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_a11y::KbMonBlock;
+#[cfg(feature = "dbus")]
+use crate::dbus::gnome_shell::GlobalShortcuts;
 use crate::layout::scrolling::ScrollDirection;
 use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, Niri, PointerVisibility, State};
@@ -616,33 +618,14 @@ impl State {
                 let is_locked = this.niri.is_locked();
                 let is_in_screenshot = this.niri.screenshot_ui.is_open();
 
-                #[cfg(feature = "dbus")]
-                if let (Some(shell), Some(dbus)) = (&this.niri.gnome_shell, &this.niri.dbus) {
-                    if let Some(conn_shell) = &dbus.conn_gnome_shell {
-                        match conn_shell
-                            .object_server()
-                            .interface::<_, crate::dbus::gnome_shell::Shell>("/org/gnome/Shell")
-                        {
-                            Ok(iface) => {
-                                if let Some(keysym) = raw {
-                                    if shell
-                                        .process_key(keysym, *mods, mod_key, pressed, time, iface)
-                                    {
-                                        return ShouldInterceptResult::Forward;
-                                    }
-                                }
-                            }
-                            Err(err) => warn!("error getting gnome Shell interface: {err:?}"),
-                        }
-                    }
-                }
-
                 let res = {
                     let config = this.niri.config.borrow();
                     let bindings = make_binds_iter(
                         &config,
                         &this.niri.screenshot_ui,
                         &mut this.niri.window_mru_ui,
+                        #[cfg(feature = "dbus")]
+                        &this.niri.global_shortcuts,
                         modifiers,
                     );
 
@@ -2600,6 +2583,30 @@ impl State {
                     self.niri.queue_redraw_mru_output();
                 }
             }
+            Action::GlobalShortcutActivateAction(action) => {
+                #[cfg(feature = "dbus")]
+                {
+                    let Some(shell) = self.niri.gnome_shell.as_ref() else {
+                        warn!(
+                        "attempted to activate action {action} before gnome_shell was initialized"
+                    );
+                        return;
+                    };
+                    shell.activate_action(action);
+                }
+            }
+            Action::GlobalShortcutDeactivateAction(action) => {
+                #[cfg(feature = "dbus")]
+                {
+                    let Some(shell) = self.niri.gnome_shell.as_ref() else {
+                        warn!(
+                        "attempted to deactivate action {action} before gnome_shell was initialized"
+                    );
+                        return;
+                    };
+                    shell.deactivate_action(action);
+                }
+            }
             Action::TestAction => {
                 #[cfg(test)]
                 {
@@ -2966,6 +2973,8 @@ impl State {
             &config,
             &self.niri.screenshot_ui,
             &mut self.niri.window_mru_ui,
+            #[cfg(feature = "dbus")]
+            &self.niri.global_shortcuts,
             modifiers,
         );
 
@@ -5652,6 +5661,7 @@ fn make_binds_iter<'a>(
     config: &'a Config,
     screenshot_ui: &'a ScreenshotUi,
     mru: &'a mut WindowMruUi,
+    #[cfg(feature = "dbus")] global_shortcuts: &'a GlobalShortcuts,
     mods: Modifiers,
 ) -> impl Iterator<Item = &'a Bind> {
     let general_binds = config.binds.0.iter();
@@ -5670,11 +5680,16 @@ fn make_binds_iter<'a>(
     // Screenshot UI binds already disable themselves when it's closed.
     let screenshot_binds = screenshot_ui.binds();
 
-    // The precedence is screenshot UI, then general, then MRU binds.
-    screenshot_binds
+    // The precedence is screenshot UI, then general, then MRU binds, then global shortcuts.
+    let all_binds = screenshot_binds
         .chain(general_binds)
         .chain(mru_binds)
-        .chain(mru_open_binds)
+        .chain(mru_open_binds);
+
+    #[cfg(feature = "dbus")]
+    let all_binds = all_binds.chain(global_shortcuts.binds());
+
+    all_binds
 }
 
 #[cfg(test)]
