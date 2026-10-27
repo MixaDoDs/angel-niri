@@ -536,8 +536,8 @@ fn stacking_throws_the_gathered_windows() {
 }
 
 // with the throw on, the gathered windows come up from below one at a time: until its turn each
-// waits out of sight under the screen, and each sets off and hits the top 300 ms after the one
-// before (a slow one from the next desk doesn't land with a fast one from further)
+// waits out of sight under the screen, and each sets off and hits the top a pause after the one
+// before, the pauses growing 0.3, 0.6, 1 s (a slow one doesn't land with a fast one)
 #[test]
 fn stacking_throws_one_window_at_a_time() {
     crate::desk_throw::set(true);
@@ -591,8 +591,12 @@ fn stacking_throws_one_window_at_a_time() {
     assert_eq!(hits.len(), 4, "{hits:?}");
     let mut hits_sorted = hits.clone();
     hits_sorted.sort();
-    for w in offs.windows(2).chain(hits_sorted.windows(2)) {
-        assert!(w[1] >= w[0] + 299, "{offs:?} {hits:?}");
+    // the pauses grow: 0.3, 0.6, 1 s
+    for (i, w) in offs.windows(2).enumerate() {
+        let gap = [300, 600, 1000][i];
+        assert!(w[1] >= w[0] + gap - 1, "{offs:?}");
+        let h = &hits_sorted[i..i + 2];
+        assert!(h[1] >= h[0] + gap - 1, "{hits:?}");
     }
     // one more in sight at each one's turn
     for (k, off) in offs.iter().enumerate() {

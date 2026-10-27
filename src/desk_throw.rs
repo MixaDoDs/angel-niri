@@ -999,24 +999,25 @@ pub fn delays(n: usize) -> Vec<Duration> {
 }
 
 /// Arriving: when each of a row of windows sets off, from now, given how far into its flight
-/// each hits first (ms): one at a time, a show, not a hurry — each sets off and hits at least
-/// `GAP_MS` after the one before, however many (a slow one off first doesn't land with the
-/// next).
+/// each hits first (ms): one at a time, a show, not a hurry — the `k`th sets off and hits at
+/// least `GAPS_MS[k - 1]` after the one before (the last of them for every one further), however
+/// many (a slow one off first doesn't land with the next).
 pub fn arrivals(hits: &[f64]) -> Vec<Duration> {
     let mut last: Option<(f64, f64)> = None;
     hits.iter()
-        .map(|&hit| {
-            let off = last.map_or(0., |(off, at)| {
-                f64::max(off + GAP_MS as f64, at + GAP_MS as f64 - hit)
-            });
+        .enumerate()
+        .map(|(k, &hit)| {
+            let gap = GAPS_MS[k.saturating_sub(1).min(GAPS_MS.len() - 1)] as f64;
+            let off = last.map_or(0., |(off, at)| f64::max(off + gap, at + gap - hit));
             last = Some((off, off + hit));
             Duration::from_millis(off.round() as u64)
         })
         .collect()
 }
 
-/// Arriving, a window sets off and hits at least this long after the one before, ms.
-const GAP_MS: u64 = 300;
+/// Arriving, the pauses between windows, ms: they grow — the second comes this long after the
+/// first, the third after the second, the fourth after the third, every one further 1 s apart.
+const GAPS_MS: [u64; 3] = [300, 600, 1000];
 /// Leaving, a throw's windows all set off within this, ms.
 const SPREAD_MS: u64 = 1100;
 
@@ -1202,23 +1203,19 @@ mod tests {
     #[test]
     fn arriving_one_at_a_time_leaving_all_within_the_spread() {
         let ms = |d: Duration| d.as_millis() as f64;
+        let gap = |i: usize| GAPS_MS[(i - 1).min(2)] as f64 - 0.5;
         // a slow one, then fast ones: the fast ones wait so as not to land with it
-        let hits = [900., 400., 400., 700.];
+        let hits = [900., 400., 400., 700., 300.];
         let off = arrivals(&hits);
         assert_eq!(off[0], Duration::ZERO);
         for i in 1..hits.len() {
-            assert!(
-                ms(off[i]) - ms(off[i - 1]) >= GAP_MS as f64 - 0.5,
-                "{i} off"
-            );
+            assert!(ms(off[i]) - ms(off[i - 1]) >= gap(i), "{i} off");
             let at = |k: usize| ms(off[k]) + hits[k];
-            assert!(at(i) - at(i - 1) >= GAP_MS as f64 - 0.5, "{i} hit");
+            assert!(at(i) - at(i - 1) >= gap(i), "{i} hit");
         }
-        // equal flights: exactly one every GAP_MS
-        let even = arrivals(&[500.; 12]);
-        for (i, d) in even.iter().enumerate() {
-            assert_eq!(*d, Duration::from_millis(i as u64 * GAP_MS));
-        }
+        // equal flights: the pauses grow 0.3, 0.6, 1 s, then 1 s each
+        let even: Vec<_> = arrivals(&[500.; 6]).into_iter().map(ms).collect();
+        assert_eq!(even, [0., 300., 900., 1900., 2900., 3900.]);
         let back = delays(3);
         assert_eq!(back[2], Duration::from_millis(feel().gap_ms * 2));
         assert!(delays(12)[11] <= Duration::from_millis(SPREAD_MS));
