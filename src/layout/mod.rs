@@ -114,19 +114,15 @@ fn throw_tiles<W: LayoutElement>(
         let app = tile.window().app_id().unwrap_or_default();
         let path = crate::desk_throw::Path::new(&app, order, nonce);
         tile.throw(delays[order], leaving, far, pos, view, path);
-        let Some((hit, (x, y))) = tile.fly().map(|fly| fly.hit_in(now, (size.w, size.h))) else {
+        let Some((hit, x)) = tile.fly().map(|fly| fly.hit_in(now, (size.w, size.h))) else {
             continue;
         };
         hits.push(niri_ipc::DeskThrow {
             output: output.to_owned(),
-            // on the screen
+            // on the screen, a corner's hit too
             pos: [
                 (pos.x + x).clamp(24., (view.w - 24.).max(24.)),
-                if leaving {
-                    view_h
-                } else {
-                    (pos.y + y).clamp(24., (view_h - 24.).max(24.))
-                },
+                if leaving { view_h } else { 0. },
             ],
             in_ms: hit.as_millis() as u64,
             off_ms: tile

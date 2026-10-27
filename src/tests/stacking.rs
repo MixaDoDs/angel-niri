@@ -491,9 +491,7 @@ fn stacking_throws_the_gathered_windows() {
     let far: Vec<_> = throws.iter().filter(|t| t.far).collect();
     assert_eq!(far.len(), 1, "only the far one hits hard");
     assert!(!far[0].bottom);
-    // into the glass in the upper part of the screen, not its edge
-    let y = far[0].pos[1];
-    assert!(y > 100. && y < 1080. * 0.6, "{y}");
+    assert_eq!(far[0].pos[1], 0.);
     f.niri_complete_animations();
     assert!(flying(&mut f).is_empty());
 

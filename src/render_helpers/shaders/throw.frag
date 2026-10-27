@@ -1,7 +1,7 @@
 // angel-niri (desk_throw.rs): a window in flight between desks, drawn turned by `throw_angle`
-// and grown by `throw_zoom` around its middle in whole `throw_pixel` cells — it steps, it doesn't
-// smear. Behind it up to three afterimages (`throw_ghostN`: offset x, y from it, their turn, how
-// opaque), dithered in the same cells by a 4×4 Bayer: the speed shows without a blur.
+// around its middle in whole `throw_pixel` cells — it steps, it doesn't smear. Behind it up to
+// three afterimages (`throw_ghostN`: offset x, y from it, their turn, how opaque), dithered in
+// the same cells by a 4×4 Bayer: the speed shows without a blur.
 precision highp float;
 
 uniform float niri_alpha;
@@ -14,7 +14,6 @@ uniform mat3 throw_geo_to_tex;
 uniform vec2 throw_tile_loc;
 uniform vec2 throw_tile_size;
 uniform float throw_angle;
-uniform float throw_zoom;
 uniform float throw_pixel;
 uniform vec4 throw_ghost0;
 uniform vec4 throw_ghost1;
@@ -26,7 +25,7 @@ vec2 onTile(vec2 p, vec2 loc, float angle) {
     float s = sin(-angle);
     float k = cos(-angle);
     vec2 d = p - c;
-    vec2 q = vec2(d.x * k - d.y * s, d.x * s + d.y * k) / throw_zoom + throw_tile_size * 0.5;
+    vec2 q = vec2(d.x * k - d.y * s, d.x * s + d.y * k) + throw_tile_size * 0.5;
     if (q.x < 0.0 || q.y < 0.0 || q.x >= throw_tile_size.x || q.y >= throw_tile_size.y)
         return vec2(-1.0);
     return q;

@@ -6,24 +6,24 @@
 //!   on a way of its own (`Path`, `Fly::new`): from below or in from a side, along a curve of its
 //!   own bends, its own pace, lean and bank; its app gives it a manner,
 //!   every throw shakes it up. From the next desk they come quickly and land with a knock
-//!   (a shake); from desks further away they come one by one, well apart, flying at you: they
-//!   grow in pixel steps and smash into the glass of the monitor in its upper part, where the eye
-//!   is (a freeze pressed flat against it, the screen jolting), bounce back off it, straighten
-//!   and drop into their places.
+//!   (a shake); from desks further away they come one by one, well apart, slam into the top of
+//!   the output at their fastest with a corner, slap flat against it and press into it (a freeze
+//!   at the hit, the screen jolting), bounce off it and drop into their places. No window goes
+//!   through the top edge: one that would touches it with a knock and a freeze of its own.
 //! - Ending, the gathered windows still on desk 1 drop off the bottom before they go back to their
 //!   desks. No damage then.
 //! Where a far one hits, the monitor breaks — the picture itself, in screen casts too
 //! (shaders/glitch.frag over the finished frame): a jolt tearing it sideways, then a black blot of
 //! leaked liquid crystal with dark veins, bending the picture around its edge, long lines across
-//! the whole screen, dead pixels of the monitor's own size flickering, the glass cracked all round
+//! the whole screen, dead pixels of the monitor's own size flickering, the glass cracked round
 //! the hit (jagged rays with branches, a web between them, crushed shards in the middle). The dead
-//! pixels and lines heal first; a couple of seconds later the blot pulls back into the impact,
-//! the cracks with it. Every hit adds its
-//! own (`glitch`): the blots grow and run together into one, past `SPOTS` a hit swells the nearest.
+//! pixels and lines heal first; a couple of seconds later the blot pulls back into the impact, the
+//! cracks with it. Every hit adds its own (`glitch`): the blots grow and run together into one,
+//! past `SPOTS` a hit swells the nearest.
 //! The pointer goes under the damage then (it is no different from the rest of the picture).
 //! The impacts also go to the shell for their sounds (`Event::DesksThrown`).
-//! In flight a window is drawn turned and grown in whole pixels of the pixel corners, with
-//! dithered afterimages trailing it (shaders/throw.frag).
+//! In flight a window is drawn turned in whole pixels of the pixel corners, with dithered
+//! afterimages trailing it (shaders/throw.frag).
 
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
@@ -310,17 +310,8 @@ impl State {
     }
 }
 
-/// Into the glass, the part of the flight going up.
+/// Into the top edge, the part of the flight going up.
 const UP: f64 = 0.5;
-/// A far one sets off this big (deep behind the glass) and grows as it comes at you, up to
-/// `ZOOM_MAX` at the hit, never past `ZOOM_FILL` of the screen.
-const DEEP: f64 = 0.7;
-const ZOOM_MIN: f64 = 1.06;
-const ZOOM_MAX: f64 = 1.35;
-const ZOOM_FILL: f64 = 0.8;
-/// Pressed flat against the glass at the hit, this much bigger; bounced back off it, this small.
-const SPLAT: f64 = 0.07;
-const RECOIL: f64 = 0.94;
 /// Below the output, how far past its edge a window starts or ends.
 const MARGIN: f64 = 16.;
 /// The afterimages lag this far behind each other, ms of the flight.
@@ -359,6 +350,12 @@ impl Path {
         }
         Self { r }
     }
+}
+
+/// How far above its top edge a window of `size` turned by `angle` reaches (its higher corner).
+fn corner_rise(size: (f64, f64), angle: f64) -> f64 {
+    let (w, h) = (size.0 / 2., size.1 / 2.);
+    w * angle.sin().abs() + h * angle.cos() - h
 }
 
 /// 0…1 from `x`, well mixed (splitmix64).
@@ -404,17 +401,23 @@ pub struct Ghost {
 #[derive(Debug)]
 pub struct Fly {
     anim: Animation,
-    /// The flight, ms, and the freeze at its hit (far ones arriving), ms.
+    /// The flight, ms, and the freeze at its hit, ms.
     ms: f64,
     hold: f64,
+    /// Where it hits the top edge, 0…1 of the flight: a far one arriving at `UP`, any other
+    /// arriving where it would first go past it. It freezes there for `hold`.
+    bump: Option<f64>,
+    /// Its top where it rests and its size: it never goes through the top edge.
+    top: f64,
+    size: (f64, f64),
+    /// A far one sinks this far into the edge at the freeze, pressed flat against it.
+    press: f64,
     pub leaving: bool,
     pub far: bool,
-    /// Its way: arriving, from its start to the hit (far: up against the glass, grown) or to its
-    /// place; leaving, from its place down past the bottom.
+    /// Its way: arriving, from its start to the hit (far: its turned top corner just touches the
+    /// top edge there — where the screen breaks) or to its place; leaving, from its place down
+    /// past the bottom.
     way: [(f64, f64); 4],
-    /// Far, arriving: how big it is against the glass, and where the glass breaks, from its middle.
-    zoom: f64,
-    crack: (f64, f64),
     /// The turn it hits with (far) or sets off with (near), radians; how much it banks in its
     /// bends.
     spin: f64,
@@ -441,7 +444,7 @@ impl Fly {
         let feel = feel();
         let r = path.r;
         let (x, y) = rest;
-        let (w, h) = size;
+        let w = size.0;
         let (vw, vh) = view;
         let pace = 0.8 + 0.4 * r[9];
         let base = if far && !leaving {
@@ -450,25 +453,12 @@ impl Fly {
             feel.near_ms
         };
         let ms = (base as f64 * pace).round();
-        let hold = if far && !leaving {
-            feel.hit_stop_ms as f64
-        } else {
-            0.
-        };
         let left = r[1] < 0.5;
         // the turn: from barely to hard, mostly leaning the way it travels
         let lean = if left { 1. } else { -1. } * if r[8] < 0.2 { -1. } else { 1. };
         // a lean, not a spin (whole turns and hard banks read as a toy, 27.10)
         let spin = lean * (0.025 + 0.07 * r[6] + 0.03 * r[7]);
         let bank = (r[10] * 2. - 1.) * 0.06;
-        let zoom = (ZOOM_FILL * vw / w)
-            .min(ZOOM_FILL * vh / h)
-            .clamp(ZOOM_MIN, ZOOM_MAX);
-        // the glass gives somewhere around its middle
-        let crack = (
-            (r[7] * 2. - 1.) * 0.22 * w * zoom,
-            (r[5] * 2. - 1.) * 0.18 * h * zoom,
-        );
 
         // screen points (the window's top left), then offsets from its rest
         let below = vh + MARGIN;
@@ -498,18 +488,8 @@ impl Fly {
             let off = (r[2] * 2. - 1.) * vw * 0.25 + if left { -0.2 } else { 0.2 } * w;
             (x + off, below + 40.)
         } else if far {
-            // up against the glass in the upper part of the screen, all of it on the screen
             let shift = (r[3] * 2. - 1.) * (vw * 0.2).min(300.);
-            let fit = |c: f64, half: f64, v: f64| {
-                if v > 2. * half + 16. {
-                    c.clamp(half + 8., v - half - 8.)
-                } else {
-                    v / 2.
-                }
-            };
-            let cx = fit(x + w / 2. + shift, w * zoom / 2., vw);
-            let cy = fit(vh * (0.3 + 0.14 * r[11]), h * zoom / 2., vh);
-            (cx - w / 2., cy - h / 2.)
+            (x + shift, corner_rise(size, spin))
         } else {
             (x, y)
         };
@@ -524,17 +504,21 @@ impl Fly {
             lerp(from.1, to.1, 0.6 + 0.3 * r[4]),
         );
         let off = |p: (f64, f64)| (p.0 - x, p.1 - y);
-        let anim =
-            Animation::ease(clock, 0., 1., 0., (ms + hold) as u64, Curve::Linear).delayed(delay);
-        Self {
-            anim,
+        let anim = |hold: f64| {
+            Animation::ease(clock.clone(), 0., 1., 0., (ms + hold) as u64, Curve::Linear)
+                .delayed(delay)
+        };
+        let mut fly = Self {
+            anim: anim(0.),
             ms,
-            hold,
+            hold: 0.,
+            bump: None,
+            top: y,
+            size,
+            press: 4. + 0.8 * f64::from(feel.shake),
             leaving,
             far,
             way: [off(from), off(c1), off(c2), off(to)],
-            zoom,
-            crack,
             spin,
             bank,
             hop: 14. + 22. * r[7],
@@ -543,24 +527,67 @@ impl Fly {
             } else {
                 feel.trail_near
             },
+        };
+        if far && !leaving {
+            fly.bump = Some(UP);
+            fly.hold = feel.hit_stop_ms as f64;
+        } else if !leaving {
+            fly.bump = (1..=240)
+                .map(|i| f64::from(i) / 240.)
+                .find(|t| fly.over(*t) > 0.5);
+            if fly.bump.is_some() {
+                fly.hold = (feel.hit_stop_ms as f64 * 0.6).round();
+            }
         }
+        fly.anim = anim(fly.hold);
+        fly
     }
 
     pub fn is_done(&self) -> bool {
         self.anim.is_done()
     }
 
-    /// Where the flight is `at` ms into it: 0…1, holding still at the hit for the freeze.
-    fn t_at(&self, at: f64) -> f64 {
-        let hit = UP * self.ms;
-        let at = if at < hit {
-            at
-        } else if at < hit + self.hold {
-            hit
-        } else {
-            at - self.hold
+    /// Where the flight is `at` ms into it: 0…1, and how far into the freeze at its hit, if in it.
+    fn t_at(&self, at: f64) -> (f64, Option<f64>) {
+        let Some(bump) = self.bump.filter(|_| self.hold > 0.) else {
+            return ((at / self.ms).clamp(0., 1.), None);
         };
-        (at / self.ms).clamp(0., 1.)
+        let hit = bump * self.ms;
+        if at < hit {
+            (at / self.ms, None)
+        } else if at < hit + self.hold {
+            (bump, Some((at - hit) / self.hold))
+        } else {
+            (((at - self.hold) / self.ms).clamp(0., 1.), None)
+        }
+    }
+
+    /// How far its turned top goes above the edge it may not pass (`t`, its way alone).
+    fn over(&self, t: f64) -> f64 {
+        let (_, y) = self.at(t);
+        corner_rise(self.size, self.angle_at(t)) - (self.top - self.top.min(0.)) - y
+    }
+
+    /// Where it is drawn `at` ms into the flight, from its place, and its turn.
+    fn pose(&self, at: f64) -> (f64, f64, f64) {
+        let (t, freeze) = self.t_at(at);
+        let (mut x, mut y) = self.at(t);
+        let mut angle = self.angle_at(t);
+        if let Some(k) = freeze.filter(|_| self.far && !self.leaving) {
+            // it hit with a corner: it slaps flat against the edge and sinks into it
+            angle = self.spin * (1. - k).powi(2);
+            x = self.way[3].0;
+            y = corner_rise(self.size, angle) - self.top - self.press * (k / 0.3).min(1.);
+            return (x, y, angle);
+        }
+        if !self.far || self.leaving {
+            // never through the top edge: up against it, a knock where it touches
+            y += self.over(t).max(0.);
+            if let Some(bump) = self.bump {
+                x += shake(t, bump, 4.);
+            }
+        }
+        (x, y, angle)
     }
 
     /// How many ms into the flight it is (0 before it sets off).
@@ -568,73 +595,37 @@ impl Fly {
         self.anim.value().clamp(0., 1.) * (self.ms + self.hold)
     }
 
-    fn t(&self) -> f64 {
-        self.t_at(self.elapsed())
-    }
-
     /// Where it is drawn, from its place.
     pub fn offset(&self) -> Point<f64, Logical> {
-        let (x, y) = self.at(self.t());
+        let (x, y, _) = self.pose(self.elapsed());
         Point::from((x, y))
     }
 
     /// The turn it is drawn with, radians.
     pub fn angle(&self) -> f64 {
-        self.angle_at(self.t())
-    }
-
-    /// How big it is drawn, about its middle: a far one arriving comes at you from deep behind
-    /// the glass, pressed flat against it at the hit, bounces back off it and settles.
-    pub fn scale(&self) -> f64 {
-        let at = self.elapsed();
-        let hit = UP * self.ms;
-        if self.far && !self.leaving && at >= hit && at < hit + self.hold {
-            let k = (at - hit) / self.hold.max(1.);
-            return self.zoom * (1. + SPLAT * (1. - k * k));
-        }
-        self.scale_at(self.t())
-    }
-
-    fn scale_at(&self, t: f64) -> f64 {
-        if !self.far || self.leaving || t <= 0. || t >= 1. {
-            return 1.;
-        }
-        if t < UP {
-            // as it would look coming nearer at an even pace: slow at first, fast at the end
-            let s = t / UP;
-            1. / lerp(1. / DEEP, 1. / self.zoom, s)
-        } else {
-            let s = (t - UP) / (1. - UP);
-            if s < 0.35 {
-                let k = 1. - (1. - s / 0.35).powi(3);
-                lerp(self.zoom, RECOIL, k)
-            } else {
-                lerp(RECOIL, 1., ((s - 0.35) / 0.45).min(1.))
-            }
-        }
+        self.pose(self.elapsed()).2
     }
 
     /// Its afterimages now, nearest first: where it was a moment ago, from where it is.
     pub fn trail(&self) -> Vec<Ghost> {
         let at = self.elapsed();
-        let t = self.t();
+        let (t, _) = self.t_at(at);
         if self.ghosts == 0 || t <= 0. || t >= 1. {
             return Vec::new();
         }
-        let (x, y) = self.at(t);
+        let (x, y, _) = self.pose(at);
         (1..=self.ghosts)
             .filter_map(|k| {
                 let back = at - k as f64 * GHOST_MS;
                 if back <= 0. {
                     return None;
                 }
-                let tb = self.t_at(back);
-                let (bx, by) = self.at(tb);
+                let (bx, by, angle) = self.pose(back);
                 let offset = Point::from((bx - x, by - y));
                 // standing (the freeze) or barely moving: nothing trails
                 (offset.x.hypot(offset.y) >= 6.).then(|| Ghost {
                     offset,
-                    angle: self.angle_at(tb),
+                    angle,
                     alpha: GHOST_ALPHA[(k - 1).min(2)],
                 })
             })
@@ -657,6 +648,10 @@ impl Fly {
             let s = t / UP;
             // the turn it hits with, banking a little in its bends
             self.spin * s.powf(0.8) + self.bank * (s * std::f64::consts::PI).sin()
+        } else if self.hold > 0. {
+            // slapped flat at the freeze, it rocks back once as it bounces off
+            let s = (t - UP) / (1. - UP);
+            -0.5 * self.spin * (1. - s).powi(2) * (s * tau).sin()
         } else {
             // straightens at the hit, swinging back once
             let s = (t - UP) / (1. - UP);
@@ -683,16 +678,22 @@ impl Fly {
             let (x, y) = bezier(&self.way, ease_out_back(t));
             return (x + shake(t, 0.7, 5.), y);
         }
-        let hit = self.way[3];
+        let mut hit = self.way[3];
         if t < UP {
             let s = t / UP;
-            // faster and faster: it hits at its fastest
+            // faster and faster into the edge: it hits at its fastest
             bezier(&self.way, s * (0.6 + 0.4 * s))
         } else {
-            // bounced back off the glass, it drops into its place
+            // off the edge it was pressed flat against, already moving
+            if self.hold > 0. {
+                hit.1 = -self.top;
+            }
             let s = (t - UP) / (1. - UP);
-            let e = ease_out_bounce(s);
-            (hit.0 * (1. - e.min(1.)), hit.1 * (1. - e))
+            let e = bounce_off(s);
+            (
+                hit.0 * (1. - e.min(1.)) + shake(t, UP, 8.),
+                hit.1 * (1. - e),
+            )
         }
     }
 
@@ -701,25 +702,25 @@ impl Fly {
         self.anim.start_time().saturating_sub(now)
     }
 
-    /// When it makes its sound, from now, and where from its top left: a far one arriving breaks
-    /// the glass, a near one knocks into place, a leaving one starts to drop.
-    pub fn hit_in(&self, now: Duration, size: (f64, f64)) -> (Duration, (f64, f64)) {
-        let t = if self.leaving {
-            0.3
-        } else if self.far {
-            UP
-        } else {
-            0.7
-        };
+    /// When it makes its sound, from now, and where from its top left, sideways: one arriving
+    /// hits the top with its higher corner (a far one hard), a near one that doesn't knocks into
+    /// place, a leaving one starts to drop.
+    pub fn hit_in(&self, now: Duration, size: (f64, f64)) -> (Duration, f64) {
+        let bump = self.bump.filter(|_| !self.leaving);
+        let t = bump.unwrap_or(if self.leaving { 0.3 } else { 0.7 });
         let start = self.anim.start_time();
         let at = (start + Duration::from_secs_f64(self.ms * t / 1000.)).saturating_sub(now);
-        let (x, y) = self.at(t);
-        let (mut x, mut y) = (x + size.0 / 2., y + size.1 / 2.);
-        if self.far && !self.leaving {
-            x += self.crack.0;
-            y += self.crack.1;
+        let (x, _, angle) = self.pose(self.ms * t);
+        let mut x = x + size.0 / 2.;
+        if bump.is_some() {
+            // the top corners turned about the middle (as shaders/throw.frag draws it): the higher
+            let (w, h) = (size.0 / 2., size.1 / 2.);
+            let (sin, cos) = angle.sin_cos();
+            let left = (-w * cos + h * sin, -w * sin - h * cos);
+            let right = (w * cos + h * sin, w * sin - h * cos);
+            x += if left.1 <= right.1 { left.0 } else { right.0 };
         }
-        (at, (x, y))
+        (at, x)
     }
 }
 
@@ -770,11 +771,11 @@ fn ease_out_back(t: f64) -> f64 {
     1. + c3 * (t - 1.).powi(3) + c1 * (t - 1.).powi(2)
 }
 
-fn ease_out_bounce(t: f64) -> f64 {
-    // one small bounce: down to the place, up a bit, back
+fn bounce_off(t: f64) -> f64 {
+    // off the edge already moving, faster and faster down to the place, up a bit, back
     if t < 0.7 {
         let s = t / 0.7;
-        s * s
+        s * (0.4 + 0.6 * s)
     } else {
         let s = (t - 0.7) / 0.3;
         1. - 0.06 * (s * std::f64::consts::PI).sin()
@@ -814,28 +815,54 @@ mod tests {
                 "{x} {y}"
             );
             assert_eq!(f.at(1.), (0., 0.));
-            // it hits the glass grown, all of it on the screen, in the upper part
-            let (hx, hy) = f.at(UP);
-            let (cx, cy) = (hx + 300. + 200., hy + 200. + 150.);
-            let (hw, hh) = (200. * f.zoom, 150. * f.zoom);
-            assert!(f.zoom > 1., "{}", f.zoom);
-            assert!(cx - hw >= 0. && cx + hw <= 1920., "{cx}");
-            assert!(cy - hh >= 0. && cy < 1080. * 0.5, "{cy}");
-            assert!((f.scale_at(UP * 0.999) - f.zoom).abs() < 0.01);
-            assert!(f.scale_at(0.01) < 0.75);
+            // it hits where its turned corner touches the top
+            let top = f.way[3].1 + 200.;
+            assert!((f.at(UP - 1e-9).1 + 200. - top).abs() < 1e-3);
+            assert!(
+                (top - corner_rise((400., 300.), f.spin)).abs() < 1e-9,
+                "{top}"
+            );
+            assert_eq!(f.bump, Some(UP));
             let near = fly_with(false, false, path.r);
             assert_eq!(near.at(1.), (0., 0.));
         }
     }
 
     #[test]
-    fn a_far_one_freezes_at_the_hit() {
+    fn a_far_one_freezes_at_the_hit_pressed_flat_into_the_edge() {
         let f = fly(false, true);
         let hit = UP * f.ms;
-        assert_eq!(f.t_at(hit), UP);
-        assert_eq!(f.t_at(hit + f.hold * 0.5), UP);
-        assert!(f.t_at(hit + f.hold + 10.) > UP);
-        assert_eq!(f.t_at(f.ms + f.hold), 1.);
+        assert_eq!(f.t_at(hit).0, UP);
+        assert_eq!(f.t_at(hit + f.hold * 0.5).0, UP);
+        assert!(f.t_at(hit + f.hold + 10.).0 > UP);
+        assert_eq!(f.t_at(f.ms + f.hold).0, 1.);
+        // flat and into the edge by the end of the freeze, off it right after
+        let (_, y, angle) = f.pose(hit + f.hold * 0.99);
+        assert!(angle.abs() < 1e-3, "{angle}");
+        assert!(y + 200. < -f.press * 0.9, "{y}");
+        let (_, y2, _) = f.pose(hit + f.hold + 30.);
+        assert!(y2 > y + f.press, "{y} {y2}");
+    }
+
+    #[test]
+    fn nothing_goes_through_the_top_edge() {
+        for i in 0..40 {
+            let path = Path::new("kitty", i, i as u64 * 31);
+            // resting at the very top: on the way in it would fly past it
+            let mut f = fly_with(false, false, path.r);
+            f.top = 0.;
+            f.way = [(f.way[0].0, 900.), (0., 600.), (0., 300.), (0., 0.)];
+            f.bump = (1..=240)
+                .map(|i| f64::from(i) / 240.)
+                .find(|t| f.over(*t) > 0.5);
+            assert!(f.bump.is_some(), "it touches the top");
+            for k in 0..=200 {
+                let at = f64::from(k) / 200. * f.ms;
+                let (_, y, angle) = f.pose(at);
+                assert!(y - corner_rise(f.size, angle) >= -1e-6, "{k} {y}");
+            }
+            assert_eq!(f.pose(f.ms).1, 0.);
+        }
     }
 
     #[test]

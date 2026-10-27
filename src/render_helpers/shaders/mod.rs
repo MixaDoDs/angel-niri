@@ -121,7 +121,6 @@ impl Shaders {
                 UniformName::new("throw_tile_loc", UniformType::_2f),
                 UniformName::new("throw_tile_size", UniformType::_2f),
                 UniformName::new("throw_angle", UniformType::_1f),
-                UniformName::new("throw_zoom", UniformType::_1f),
                 UniformName::new("throw_pixel", UniformType::_1f),
                 UniformName::new("throw_ghost0", UniformType::_4f),
                 UniformName::new("throw_ghost1", UniformType::_4f),
