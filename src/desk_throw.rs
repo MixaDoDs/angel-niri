@@ -3,8 +3,9 @@
 //! on. The strength (calm, usual, wild) sets how far apart they come, their trails, the hit's
 //! freeze and shake, and how big and long the break is (`Feel`); calm breaks nothing.
 //! - Starting, the windows gathered from desks 2…N onto desk 1 fly up from below its output, each
-//!   on a path of its own: its app sets the side, the bow and the turn it likes, every throw
-//!   shakes them up a little (`Path`). From the next desk they come quickly and land with a knock
+//!   on a way of its own (`Path`, `Fly::new`): from below or in from a side, along a curve of its
+//!   own bends, its own pace, turn and bank, now and then a whole spin; its app gives it a manner,
+//!   every throw shakes it up. From the next desk they come quickly and land with a knock
 //!   (a shake); from desks further away they come one by one, well apart, slam into the top of
 //!   the output (a freeze at the hit, the screen jolting), straighten and drop into their places.
 //! - Ending, the gathered windows still on desk 1 drop off the bottom before they go back to their
@@ -305,32 +306,21 @@ impl State {
     }
 }
 
-/// The turn at its widest, radians (about 7°), before a path's own.
-const SPIN: f64 = 0.12;
 /// Into the top edge, the part of the flight going up.
 const UP: f64 = 0.5;
-/// Leaving, the hop up before the drop, logical px.
-const HOP: f64 = 24.;
 /// Below the output, how far past its edge a window starts or ends.
 const MARGIN: f64 = 16.;
 /// The afterimages lag this far behind each other, ms of the flight.
 const GHOST_MS: f64 = 24.;
 const GHOST_ALPHA: [f32; 3] = [0.5, 0.3, 0.16];
 
-/// A window's own way of flying: its app's liking (the side, the bow, the turn, the pace) shaken
-/// up a little by every throw, so no two fly alike.
+/// A window's own way of flying: twelve rolls, each part its app's liking and part this throw's
+/// chance (so an app keeps a manner, yet no two throws are alike). `Fly::new` makes a way out of
+/// them: where it comes from (below, or in from a side), the bends of its curve, its pace, how far
+/// it turns and banks, now and then a whole spin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Path {
-    /// Sideways, where it comes from (or goes to), logical px: - left, + right.
-    pub side: f64,
-    /// How far its way bows sideways in between, logical px, either way.
-    pub bow: f64,
-    /// Its turn at the widest, radians, signed.
-    pub spin: f64,
-    /// Its flight takes this times as long.
-    pub pace: f64,
-    /// At the hit, the part of its sideways start still left.
-    pub at_hit: f64,
+    pub r: [f64; 12],
 }
 
 impl Path {
@@ -339,28 +329,29 @@ impl Path {
         let app = app.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
             (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
         });
-        let liked = |k: u64| unit(app ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15));
-        let now = |k: u64| {
-            unit(
+        let mut r = [0.; 12];
+        for (k, r) in r.iter_mut().enumerate() {
+            let k = k as u64 + 1;
+            let liked = unit(app ^ k.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+            let now = unit(
                 nonce
                     ^ (order as u64 + 1).wrapping_mul(0xbf58_476d_1ce4_e5b9)
                     ^ k.wrapping_mul(0x94d0_49bb_1331_11eb),
-            )
-        };
-        // left and right in turn, so a crowd spreads out; the app picks which first
-        let left = (order % 2 == 0) != (liked(1) < 0.5);
-        let reach = 130. + 150. * liked(2) + 110. * now(3);
-        // it mostly turns the way it travels, now and then the other way
-        let turn = SPIN * (0.55 + 0.7 * liked(6) + 0.35 * now(7));
-        let with = now(8) >= 0.22;
-        Self {
-            side: if left { -reach } else { reach },
-            bow: (liked(4) * 2. - 1.) * 70. + (now(5) * 2. - 1.) * 60.,
-            spin: if left == with { turn } else { -turn },
-            pace: 0.86 + 0.14 * liked(9) + 0.16 * now(10),
-            at_hit: 0.25 + 0.3 * now(11),
+            );
+            *r = 0.35 * liked + 0.65 * now;
         }
+        // left and right in turn, so a crowd spreads out
+        if order % 2 == 1 {
+            r[1] = 1. - r[1];
+        }
+        Self { r }
     }
+}
+
+/// How far above its top edge a window of `size` turned by `angle` reaches (its higher corner).
+fn corner_rise(size: (f64, f64), angle: f64) -> f64 {
+    let (w, h) = (size.0 / 2., size.1 / 2.);
+    w * angle.sin().abs() + h * angle.cos() - h
 }
 
 /// 0…1 from `x`, well mixed (splitmix64).
@@ -370,6 +361,27 @@ fn unit(x: u64) -> f64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^= z >> 31;
     (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+/// A cubic Bézier through offsets, at `s` (past 1 it goes on the way it ended: an overshoot).
+fn bezier(p: &[(f64, f64); 4], s: f64) -> (f64, f64) {
+    if s > 1. {
+        let (end, before) = (p[3], p[2]);
+        return (
+            end.0 + (s - 1.) * 3. * (end.0 - before.0),
+            end.1 + (s - 1.) * 3. * (end.1 - before.1),
+        );
+    }
+    let u = 1. - s;
+    let (a, b, c, d) = (u * u * u, 3. * u * u * s, 3. * u * s * s, s * s * s);
+    (
+        a * p[0].0 + b * p[1].0 + c * p[2].0 + d * p[3].0,
+        a * p[0].1 + b * p[1].1 + c * p[2].1 + d * p[3].1,
+    )
 }
 
 /// An afterimage trailing a window in flight: from where the window is drawn now, turned so, this
@@ -390,41 +402,106 @@ pub struct Fly {
     hold: f64,
     pub leaving: bool,
     pub far: bool,
-    /// Down to below the output.
-    below: f64,
-    /// Up to the output's top edge (far ones arriving).
-    top: f64,
-    /// The window's size: it hits with a corner.
-    size: (f64, f64),
-    path: Path,
+    /// Its way: arriving, from its start to the hit (far: its turned top corner just touches the
+    /// top edge there — where the screen breaks) or to its place; leaving, from its place down
+    /// past the bottom.
+    way: [(f64, f64); 4],
+    /// The turn it hits with (far) or sets off with (near), radians; how much it banks in its
+    /// bends; whole spins on the way.
+    spin: f64,
+    bank: f64,
+    spins: f64,
+    /// Leaving: the hop up before the drop.
+    hop: f64,
     ghosts: usize,
 }
 
 impl Fly {
-    /// A flight starting `delay` from now; `y`: the window's top in its output, `view_h`: the
-    /// output's height; `size`: the window's; `path`: its own way.
+    /// A flight starting `delay` from now; `rest`: where the window's top left rests in its
+    /// output, `size`: the window's, `view`: the output's; `path`: its rolls.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         clock: Clock,
         delay: Duration,
         leaving: bool,
         far: bool,
-        y: f64,
-        view_h: f64,
+        rest: (f64, f64),
         size: (f64, f64),
+        view: (f64, f64),
         path: Path,
     ) -> Self {
         let feel = feel();
+        let r = path.r;
+        let (x, y) = rest;
+        let w = size.0;
+        let (vw, vh) = view;
+        let pace = 0.8 + 0.4 * r[9];
         let base = if far && !leaving {
             feel.far_ms
         } else {
             feel.near_ms
         };
-        let ms = (base as f64 * path.pace).round();
+        let ms = (base as f64 * pace).round();
         let hold = if far && !leaving {
             feel.hit_stop_ms as f64
         } else {
             0.
         };
+        let left = r[1] < 0.5;
+        // the turn: from barely to hard, mostly leaning the way it travels
+        let lean = if left { 1. } else { -1. } * if r[8] < 0.2 { -1. } else { 1. };
+        let spin = lean * (0.03 + 0.25 * r[6] * r[6] + 0.06 * r[7]);
+        let bank = (r[10] * 2. - 1.) * 0.22;
+        let spins = if far && !leaving && r[11] > 0.86 {
+            lean
+        } else {
+            0.
+        };
+
+        // screen points (the window's top left), then offsets from its rest
+        let below = vh + MARGIN;
+        let from = if leaving {
+            (x, y)
+        } else if r[0] < 0.5 {
+            // from below, anywhere along the bottom
+            (
+                lerp(
+                    -w * 0.3,
+                    vw - w * 0.7,
+                    if left { r[2] * 0.6 } else { 0.4 + r[2] * 0.6 },
+                ),
+                below,
+            )
+        } else if r[0] < 0.8 {
+            // in from a side, low down
+            (
+                if left { -w - MARGIN } else { vw + MARGIN },
+                lerp(vh * 0.35, vh * 0.95, r[2]),
+            )
+        } else {
+            // from a bottom corner, swerving across
+            (if left { -w * 0.6 } else { vw - w * 0.4 }, below)
+        };
+        let to = if leaving {
+            let off = (r[2] * 2. - 1.) * vw * 0.25 + if left { -0.2 } else { 0.2 } * w;
+            (x + off, below + 40.)
+        } else if far {
+            let shift = (r[3] * 2. - 1.) * (vw * 0.2).min(300.);
+            (x + shift, corner_rise(size, spin))
+        } else {
+            (x, y)
+        };
+        // the bends: somewhere along the way, pulled off it sideways, either way
+        let swing = (vw * 0.45).min(700.);
+        let c1 = (
+            lerp(from.0, to.0, 0.3) + (r[4] * 2. - 1.) * swing,
+            lerp(from.1, to.1, 0.25 + 0.3 * r[5]),
+        );
+        let c2 = (
+            lerp(from.0, to.0, 0.7) + (r[5] * 2. - 1.) * swing * 0.6,
+            lerp(from.1, to.1, 0.6 + 0.3 * r[4]),
+        );
+        let off = |p: (f64, f64)| (p.0 - x, p.1 - y);
         let anim =
             Animation::ease(clock, 0., 1., 0., (ms + hold) as u64, Curve::Linear).delayed(delay);
         Self {
@@ -433,10 +510,11 @@ impl Fly {
             hold,
             leaving,
             far,
-            below: view_h - y + MARGIN,
-            top: -y,
-            size,
-            path,
+            way: [off(from), off(c1), off(c2), off(to)],
+            spin,
+            bank,
+            spins,
+            hop: 14. + 22. * r[7],
             ghosts: if far && !leaving {
                 feel.trail_far
             } else {
@@ -510,67 +588,60 @@ impl Fly {
     }
 
     fn angle_at(&self, t: f64) -> f64 {
-        let spin = self.path.spin;
         if t <= 0. || t >= 1. {
             return 0.;
         }
+        let tau = std::f64::consts::TAU;
         if self.leaving {
-            return -spin * t;
+            return -self.spin * t * 1.5 + self.bank * (t * std::f64::consts::PI).sin();
         }
         if !self.far {
-            return spin * 0.6 * (1. - t) * (1. - t);
+            let e = 1. - t;
+            return self.spin * 1.4 * e * e + self.bank * (t * std::f64::consts::PI).sin() * e;
         }
         if t < UP {
-            spin * (t / UP * std::f64::consts::FRAC_PI_2).sin()
+            let s = t / UP;
+            // the turn it hits with, banking in its bends, a whole spin for some
+            self.spin * s.powf(0.8)
+                + self.bank * (s * std::f64::consts::PI).sin()
+                + self.spins * tau * (1. - (1. - s) * (1. - s))
         } else {
             // straightens at the hit, swinging back once
             let s = (t - UP) / (1. - UP);
-            spin * (1. - s).powi(3) * (s * std::f64::consts::TAU).cos()
+            self.spin * (1. - s).powi(3) * (s * tau).cos()
         }
     }
 
     fn at(&self, t: f64) -> (f64, f64) {
-        let Path {
-            side, bow, at_hit, ..
-        } = self.path;
-        let arc = |s: f64| bow * (s.clamp(0., 1.) * std::f64::consts::PI).sin();
         if t >= 1. && !self.leaving {
             return (0., 0.);
         }
         if self.leaving {
-            // a hop up, then down past the bottom and off to its side, faster and faster
+            // a hop up, then down past the bottom along its way, faster and faster
             let hop = if t < 0.35 {
-                HOP * (t / 0.35 * std::f64::consts::PI).sin()
+                self.hop * (t / 0.35 * std::f64::consts::PI).sin()
             } else {
                 0.
             };
-            return (
-                side * 0.5 * t * t + arc(t) * 0.5,
-                self.below * t.powi(3) - hop,
-            );
+            let (x, y) = bezier(&self.way, t.powi(3));
+            return (x, y - hop);
         }
         if !self.far {
-            // up into place from its side, a little past it and back, then a knock
-            let e = ease_out_back(t);
-            return (
-                side * (1. - e) + arc(e) * 0.6 + shake(t, 0.7, 5.),
-                self.below * (1. - e),
-            );
+            // into place along its way, a little past it and back, then a knock
+            let (x, y) = bezier(&self.way, ease_out_back(t));
+            return (x + shake(t, 0.7, 5.), y);
         }
+        let hit = self.way[3];
         if t < UP {
             let s = t / UP;
             // fast, slowing a little near the top: it hits with speed
-            let s = s * (1.6 - 0.6 * s);
-            (
-                side * (1. - (1. - at_hit) * s) + arc(s),
-                self.below + (self.top - self.below) * s,
-            )
+            bezier(&self.way, s * (1.6 - 0.6 * s))
         } else {
             let s = (t - UP) / (1. - UP);
             let e = ease_out_bounce(s);
             (
-                side * at_hit * (1. - e.min(1.)) + shake(t, UP, 8.),
-                self.top * (1. - e),
+                hit.0 * (1. - e.min(1.)) + shake(t, UP, 8.),
+                hit.1 * (1. - e),
             )
         }
     }
@@ -580,10 +651,10 @@ impl Fly {
         self.anim.start_time().saturating_sub(now)
     }
 
-    /// When it makes its sound, from now, and where from its middle, sideways: a far one
-    /// arriving hits the top with its leading corner (turned, that one is highest), a near one
-    /// knocks into place, a leaving one starts to drop.
-    pub fn hit_in(&self, now: Duration) -> (Duration, f64) {
+    /// When it makes its sound, from now, and where from its top left, sideways: a far one
+    /// arriving hits the top with its higher corner, a near one knocks into place, a leaving one
+    /// starts to drop.
+    pub fn hit_in(&self, now: Duration, size: (f64, f64)) -> (Duration, f64) {
         let t = if self.leaving {
             0.3
         } else if self.far {
@@ -593,10 +664,10 @@ impl Fly {
         };
         let start = self.anim.start_time();
         let at = (start + Duration::from_secs_f64(self.ms * t / 1000.)).saturating_sub(now);
-        let mut x = self.at(t).0;
+        let mut x = self.at(t).0 + size.0 / 2.;
         if self.far && !self.leaving {
             // the top corners turned about the middle (as shaders/throw.frag draws it): the higher
-            let (w, h) = (self.size.0 / 2., self.size.1 / 2.);
+            let (w, h) = (size.0 / 2., size.1 / 2.);
             let (sin, cos) = self.angle_at(t).sin_cos();
             let left = (-w * cos + h * sin, -w * sin - h * cos);
             let right = (w * cos + h * sin, w * sin - h * cos);
@@ -668,40 +739,44 @@ fn ease_out_bounce(t: f64) -> f64 {
 mod tests {
     use super::*;
 
-    const PATH: Path = Path {
-        side: -150.,
-        bow: 0.,
-        spin: SPIN,
-        pace: 1.,
-        at_hit: 0.4,
-    };
-
-    fn fly(leaving: bool, far: bool) -> Fly {
+    fn fly_with(leaving: bool, far: bool, r: [f64; 12]) -> Fly {
         Fly::new(
             Clock::with_time(Duration::ZERO),
             Duration::ZERO,
             leaving,
             far,
-            200.,
-            1000.,
+            (300., 200.),
             (400., 300.),
-            PATH,
+            (1920., 1080.),
+            Path { r },
         )
     }
 
-    #[test]
-    fn flights_start_below_from_their_side_and_end_in_place() {
-        let f = fly(false, true);
-        assert_eq!(f.at(0.), (-150., 816.));
-        assert_eq!(f.at(UP).1, -200.);
-        assert_eq!(f.at(1.), (0., 0.));
-        // the turn lifts the left corner: it hits there
-        let (_, x) = f.hit_in(Duration::ZERO);
-        assert!(x < -60. - 150., "{x}");
+    fn fly(leaving: bool, far: bool) -> Fly {
+        fly_with(leaving, far, [0.3; 12])
+    }
 
-        let near = fly(false, false);
-        assert_eq!(near.at(1.), (0., 0.));
-        assert!(near.at(0.).1 > 800.);
+    #[test]
+    fn flights_start_off_screen_and_end_in_place() {
+        for i in 0..30 {
+            let path = Path::new("kitty", i, i as u64 * 977);
+            let f = fly_with(false, true, path.r);
+            let (x, y) = f.at(0.);
+            // its top left is off the screen: below it, or past a side
+            assert!(
+                y + 200. > 1080. || x + 300. < -399. || x + 300. > 1920.,
+                "{x} {y}"
+            );
+            assert_eq!(f.at(1.), (0., 0.));
+            // it stops where its turned corner touches the top
+            let top = f.at(UP).1 + 200.;
+            assert!(
+                (top - corner_rise((400., 300.), f.spin)).abs() < 1e-9,
+                "{top}"
+            );
+            let near = fly_with(false, false, path.r);
+            assert_eq!(near.at(1.), (0., 0.));
+        }
     }
 
     #[test]
@@ -718,23 +793,27 @@ mod tests {
     fn leaving_ends_below() {
         let f = fly(true, true);
         assert_eq!(f.at(0.), (0., 0.));
-        assert_eq!(f.at(1.).1, 816.);
+        assert!(f.at(1.).1 + 200. > 1080.);
     }
 
     #[test]
-    fn paths_differ_by_app_and_throw_but_keep_to_their_app() {
-        let a = Path::new("kitty", 0, 7);
-        assert_eq!(a, Path::new("kitty", 0, 7));
-        assert_ne!(a, Path::new("kitty", 0, 8));
-        assert_ne!(a, Path::new("helium", 0, 7));
-        // a crowd spreads to both sides
-        let sides: Vec<_> = (0..6).map(|i| Path::new("kitty", i, 7).side < 0.).collect();
-        assert!(sides.contains(&true) && sides.contains(&false));
-        for i in 0..40 {
-            let p = Path::new("x", i, i as u64 * 31);
-            assert!((130.0..=390.).contains(&p.side.abs()), "{p:?}");
-            assert!((0.86..=1.16).contains(&p.pace), "{p:?}");
+    fn ways_differ_by_throw_and_spread_out() {
+        let ways: Vec<_> = (0..8)
+            .map(|i| fly_with(false, true, Path::new("kitty", i, 7).r).way)
+            .collect();
+        for (i, a) in ways.iter().enumerate() {
+            for b in &ways[i + 1..] {
+                assert_ne!(a, b);
+            }
         }
+        assert_ne!(Path::new("kitty", 0, 7), Path::new("kitty", 0, 8));
+        assert_ne!(Path::new("kitty", 0, 7), Path::new("helium", 0, 7));
+        // from both sides of the screen
+        let starts: Vec<_> = ways.iter().map(|w| w[0].0 + 300. < 760.).collect();
+        assert!(
+            starts.contains(&true) && starts.contains(&false),
+            "{starts:?}"
+        );
     }
 
     #[test]

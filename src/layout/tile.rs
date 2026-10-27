@@ -790,8 +790,8 @@ impl<W: LayoutElement> Tile<W> {
         delay: std::time::Duration,
         leaving: bool,
         far: bool,
-        y: f64,
-        view_h: f64,
+        rest: Point<f64, Logical>,
+        view: Size<f64, Logical>,
         path: crate::desk_throw::Path,
     ) {
         if self.options.animations.window_movement.0.off {
@@ -804,9 +804,9 @@ impl<W: LayoutElement> Tile<W> {
             delay,
             leaving,
             far,
-            y,
-            view_h,
+            (rest.x, rest.y),
             (size.w, size.h),
+            (view.w, view.h),
             path,
         ));
     }

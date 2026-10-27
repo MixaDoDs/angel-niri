@@ -260,6 +260,10 @@ void cracks(vec4 h, float w, vec2 s, inout vec3 col) {
             line = dr;
     }
     float t = abs(line);
+    // the contact itself: a white star of crushed glass flashing for a few frames
+    if (h.z < 0.1 && r < g_px * (8.0 + 46.0 * h.z / 0.1)
+            && hash(floor(s / (g_px * 2.0)) + vec2(g_step, seed)) < 0.6 * (1.0 - h.z / 0.1) + 0.2)
+        col = mix(col, vec3(1.0), 0.9 * (1.0 - h.z / 0.1));
     if (t < g_px * 0.9)
         col = mix(col, vec3(0.04), 0.85);
     else if (line > 0.0 && t < g_px * 2.0)
