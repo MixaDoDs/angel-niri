@@ -46,8 +46,8 @@ thread_local! {
 /// How hard the throw is, by its strength.
 #[derive(Debug, Clone, Copy)]
 pub struct Feel {
-    near_gap_ms: u64,
-    far_gap_ms: u64,
+    /// Leaving: the windows this far apart, ms.
+    gap_ms: u64,
     /// Leaving: how long a window takes to drop off the bottom, ms.
     drop_ms: u64,
     /// How fast a window sets off, logical px/s: from the next desk, from one further away.
@@ -70,8 +70,7 @@ pub struct Feel {
 
 const FEELS: [Feel; 3] = [
     Feel {
-        near_gap_ms: 90,
-        far_gap_ms: 250,
+        gap_ms: 90,
         drop_ms: 420,
         near_speed: 900.,
         far_speed: 1500.,
@@ -84,8 +83,7 @@ const FEELS: [Feel; 3] = [
         shake: 0.,
     },
     Feel {
-        near_gap_ms: 150,
-        far_gap_ms: 380,
+        gap_ms: 150,
         drop_ms: 520,
         near_speed: 1300.,
         far_speed: 2300.,
@@ -98,8 +96,7 @@ const FEELS: [Feel; 3] = [
         shake: 14.,
     },
     Feel {
-        near_gap_ms: 180,
-        far_gap_ms: 450,
+        gap_ms: 180,
         drop_ms: 560,
         near_speed: 1500.,
         far_speed: 2800.,
@@ -343,10 +340,12 @@ const GHOST_MS: f64 = 24.;
 const GHOST_ALPHA: [f32; 3] = [0.5, 0.3, 0.16];
 /// An arriving flight is worked out ahead, one step this long, ms.
 const SIM_MS: f64 = 1000. / 240.;
-/// Before it sets off a window ducks down a little, this long, ms.
-const WIND_MS: f64 = 110.;
-/// Until its first hit it speeds up by this, logical px/s²: it hits at its fastest.
+/// Arriving, a window comes up from below the screen this far under its bottom edge, logical px.
+const BELOW: f64 = 8.;
+/// Until its first hit it speeds up by this, logical px/s², up to `TOP_SPEED` times as fast as it
+/// set off: it hits at its fastest.
 const BOOST: f64 = 2600.;
+const TOP_SPEED: f64 = 1.45;
 /// Sliding after it, it brakes: a share of its speed each second (`Fly::arrive`) and this, px/s².
 const BRAKE: f64 = 260.;
 /// Slower than this (px/s) it has stopped.
@@ -599,7 +598,14 @@ impl Fly {
         let (w, h) = size;
         let (vw, vh) = self.view;
         let dt = SIM_MS / 1000.;
-        let mut c = (self.rest.0 + w / 2., self.rest.1 + h / 2.);
+        // from below the screen, about under where it stood
+        let x = self.rest.0 + w / 2. + (r[2] * 2. - 1.) * vw * 0.15;
+        let x = if w < vw {
+            x.clamp(w / 2., vw - w / 2.)
+        } else {
+            vw / 2.
+        };
+        let mut c = (x, vh + h / 2. + BELOW);
 
         // straight up give or take 50°, leaning the way it goes; never so far aside that it
         // meets a side before the top
@@ -624,24 +630,20 @@ impl Fly {
         // and which way, how hard the top throws it aside (it hit with a corner)
         let glance = if r[10] < 0.5 { -1. } else { 1. } * (0.2 + 0.5 * r[11]);
 
-        // it ducks first, the more the nearer the top it stands: room to speed up
-        let room = (vh - (c.1 + h / 2.)).max(0.);
-        let duck = (14. + (220. - (c.1 - h / 2.)).clamp(0., 220.) * 0.35).min(room);
-        let mut poses = Vec::new();
-        let steps = (WIND_MS / SIM_MS).round() as usize;
-        for i in 0..steps {
-            let k = i as f64 / steps as f64;
-            let e = k * k * (3. - 2. * k);
-            poses.push((c.0, c.1 + duck * e, -lean * 0.5 * e));
-        }
-        c.1 += duck;
+        let top = speed * TOP_SPEED;
         let mut a = -lean * 0.5;
+        // all of it on the screen sideways, leaning as it is
+        let hx0 = half(size, a).0;
+        if hx0 < vw / 2. {
+            c.0 = c.0.clamp(hx0, vw - hx0);
+        }
+        let mut poses = vec![(c.0, c.1, a)];
         let mut spin = 0.;
-        let mut t = steps as f64 * SIM_MS;
-        self.launch = t;
+        let mut t = SIM_MS;
+        self.launch = 0.;
 
-        // standing partly off the screen, it may stay out as far as it was until it comes in:
-        // the walls there close in behind it (no jump onto the screen)
+        // below the screen, it may stay out as far as it is until it comes in: the walls there
+        // close in behind it
         let (hx0, hy0) = half(size, a);
         let over = |p: f64, half: f64, len: f64| ((half - p).max(0.), (p + half - len).max(0.));
         let mut slack = [over(c.1, hy0, vh), over(c.0, hx0, vw)];
@@ -654,7 +656,7 @@ impl Fly {
             let s = v.0.hypot(v.1);
             if hit.is_none() {
                 if s > 0. {
-                    let k = (s + BOOST * dt) / s;
+                    let k = (s + BOOST * dt).min(top.max(s)) / s;
                     v = (v.0 * k, v.1 * k);
                 }
             } else {
@@ -973,41 +975,26 @@ impl Fly {
     }
 }
 
-/// When each of a row of windows (`far` flags, the near ones first) sets off, from now: the near
-/// ones quickly, the far ones well apart, all of them off within `SPREAD_MS`.
+/// When each of a row of windows (`far` flags, the near ones first) sets off, from now. Arriving:
+/// one every `GAP_MS`, however many (a show, not a hurry). Leaving: quickly, all of them off
+/// within `SPREAD_MS`.
 pub fn delays(far: &[bool], leaving: bool) -> Vec<Duration> {
-    let feel = feel();
-    let mut gaps = Vec::with_capacity(far.len());
-    let mut last_far = false;
-    for (i, far) in far.iter().enumerate() {
-        gaps.push(if i == 0 {
-            0
-        } else if leaving || !far {
-            feel.near_gap_ms
-        } else if last_far {
-            feel.far_gap_ms
-        } else {
-            // the first far one after the near ones: a breath first
-            feel.near_gap_ms * 2
-        });
-        last_far = *far && !leaving;
-    }
-    let total: u64 = gaps.iter().sum();
-    let squeeze = if total > SPREAD_MS {
-        SPREAD_MS as f64 / total as f64
+    let n = far.len() as u64;
+    let gap = if !leaving {
+        GAP_MS as f64
+    } else if n > 1 {
+        (feel().gap_ms as f64).min(SPREAD_MS as f64 / (n - 1) as f64)
     } else {
-        1.
+        0.
     };
-    let mut at = 0.;
-    gaps.into_iter()
-        .map(|gap| {
-            at += gap as f64 * squeeze;
-            Duration::from_millis(at.round() as u64)
-        })
+    (0..n)
+        .map(|i| Duration::from_millis((i as f64 * gap).round() as u64))
         .collect()
 }
 
-/// A throw's windows all set off within this, ms.
+/// Arriving, a window sets off this long after the one before, ms.
+const GAP_MS: u64 = 300;
+/// Leaving, a throw's windows all set off within this, ms.
 const SPREAD_MS: u64 = 1100;
 
 /// The longest a leaving flight takes.
@@ -1044,18 +1031,19 @@ mod tests {
     }
 
     #[test]
-    fn it_sets_off_where_it_stood_stays_on_the_screen_and_stops_anywhere() {
+    fn it_comes_up_from_below_stays_on_the_screen_and_stops_anywhere() {
         let mut ends = Vec::new();
         for i in 0..40 {
             let rest = ((100 + 37 * i) as f64 % 1500., (i * 61 % 700) as f64);
             let far = i % 2 == 0;
             let f = fly_at(false, far, rest, Path::new("kitty", i, i as u64 * 977).r);
-            // where it stood, not a jump
-            let (x, y, _) = f.pose(0.);
-            assert!((x + f.shift.0).abs() < 1e-6 && (y + f.shift.1).abs() < 1e-6);
-            assert_eq!(f.pose(f.ms + 1.), (0., 0., 0.));
-            // the screen's edges are walls; it moves, it never jumps
+            // from below the screen, out of sight
             let end = (rest.0 + f.shift.0, rest.1 + f.shift.1);
+            let (_, y, _) = f.pose(0.);
+            assert!(end.1 + y >= VIEW.1, "{i}");
+            assert_eq!(f.pose(f.ms + 1.), (0., 0., 0.));
+            // the screen's edges are walls once it is in; it moves, it never jumps
+            let mut inside = false;
             for k in 0..f.poses.len() {
                 let (x, y, a) = f.poses[k];
                 if k > 0 {
@@ -1065,15 +1053,17 @@ mod tests {
                 let (hx, hy) = half(SIZE, a);
                 let (cx, cy) = (end.0 + x + SIZE.0 / 2., end.1 + y + SIZE.1 / 2.);
                 assert!(cx - hx > -0.5 && cx + hx < VIEW.0 + 0.5, "{i} {k} x {cx}");
-                assert!(cy - hy > -0.5 && cy + hy < VIEW.1 + 0.5, "{i} {k} y {cy}");
+                assert!(cy - hy > -0.5, "{i} {k} y {cy}");
+                inside |= cy + hy < VIEW.1 + 0.5;
+                assert!(!inside || cy + hy < VIEW.1 + 0.5, "{i} {k} y {cy}");
             }
             // the first thing it hits is the top
             let first = f.contacts[0];
             assert_eq!(first.normal, (0., 1.), "{i}");
             assert!(first.pos.1 < 1.);
             // done within the show (the dent heals after, standing)
-            assert!(f.poses.len() as f64 * SIM_MS <= 2000., "{i} {}", f.ms);
-            assert!(f.ms <= 3000., "{i} {}", f.ms);
+            assert!(f.poses.len() as f64 * SIM_MS <= 2600., "{i} {}", f.ms);
+            assert!(f.ms <= 3200., "{i} {}", f.ms);
             ends.push(end);
         }
         // anywhere: they don't all end up in one spot
@@ -1119,19 +1109,16 @@ mod tests {
             assert!(far.contacts[0].power > BLOT, "{i}");
             // speeding up to it: every step up longer than the one before
             let up: Vec<_> = far.poses.windows(2).map(|w| w[0].1 - w[1].1).collect();
-            let launch = (WIND_MS / SIM_MS).round() as usize;
             let hit = (far.contacts[0].at / SIM_MS).round() as usize;
-            for k in launch + 1..hit.saturating_sub(1) {
+            for k in 1..hit.saturating_sub(1) {
                 assert!(up[k] >= up[k - 1] - 1e-6, "{i} {k}");
             }
         }
     }
 
     #[test]
-    fn standing_at_the_top_it_ducks_first() {
+    fn standing_at_the_top_it_still_hits_hard() {
         let f = fly_at(false, true, (600., 0.), [0.5; 12]);
-        let low = f.poses.iter().map(|p| p.1).fold(f64::MIN, f64::max);
-        assert!(low + f.shift.1 > 40., "{low}");
         assert!(f.contacts[0].power > BLOT);
     }
 
@@ -1190,15 +1177,15 @@ mod tests {
     }
 
     #[test]
-    fn far_ones_come_apart_near_ones_quickly_all_within_the_spread() {
-        let near = feel().near_gap_ms;
-        let d = delays(&[false, true, true], false);
-        assert_eq!(d[1], Duration::from_millis(near * 2));
-        assert!(d[2] - d[1] >= Duration::from_millis(300));
+    fn arriving_one_every_gap_leaving_all_within_the_spread() {
         let many = delays(&[true; 12], false);
-        assert!(many[11] <= Duration::from_millis(SPREAD_MS));
+        for (i, d) in many.iter().enumerate() {
+            assert_eq!(*d, Duration::from_millis(i as u64 * GAP_MS));
+        }
         let back = delays(&[false, true, true], true);
-        assert_eq!(back[2], Duration::from_millis(near * 2));
+        assert_eq!(back[2], Duration::from_millis(feel().gap_ms * 2));
+        let back = delays(&[true; 12], true);
+        assert!(back[11] <= Duration::from_millis(SPREAD_MS));
     }
 
     #[test]
