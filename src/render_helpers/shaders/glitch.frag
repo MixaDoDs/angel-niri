@@ -59,6 +59,9 @@ uniform float g_left;   // s until it has all healed: the hits heal together
 // the dead pixels and lines are gone this long before the end, healing over the span before
 #define PIX_END 4.3
 #define PIX_SPAN 2.0
+// the cracks: rays round the hit, straight bits in each
+#define RAYS 11
+#define SEGS 5
 
 // no sin(): large pixel coordinates would band
 float hash(vec2 p) {
@@ -217,56 +220,179 @@ void stuck(vec4 h, float w, vec2 s, float v, inout vec3 col) {
     col = p;
 }
 
-// the glass cracked at the hit: jagged rays running into the screen and the web between them,
-// one physical pixel dark with a bright edge where the glass catches the light; they shoot out
-// in the first 0.12 s and go with the blot
-void cracks(vec4 h, float w, vec2 s, inout vec3 col) {
+// the nearest crack line so far to `p`: segment a→b, signed by its side (the lit side > 0), its
+// half width for a line one physical pixel thick, and how far out along its ray it is, 0…1
+void crackSeg(vec2 p, vec2 a, vec2 b, float out0, float out1, inout float line,
+              inout float half_, inout float tip) {
+    vec2 ab = b - a;
+    float ll = max(dot(ab, ab), 1e-4);
+    float k = clamp(dot(p - a, ab) / ll, 0.0, 1.0);
+    float dist = length(p - a - ab * k);
+    if (dist >= abs(line))
+        return;
+    float side = ab.x * (p.y - a.y) - ab.y * (p.x - a.x);
+    line = side >= 0.0 ? dist : -dist;
+    half_ = 0.5 * max(abs(ab.x), abs(ab.y)) / sqrt(ll) + 0.02;
+    tip = mix(out0, out1, k);
+}
+
+// the web between two neighbouring rays: chords from one's bend to the other's, bowed out a little
+void crackChord(vec2 p, vec2 q, vec2 r, float seed, float fi, float fj, float ring,
+                inout float line, inout float half_, inout float tip) {
+    if (hash(vec2(seed + fj * 5.1, fi + 400.0)) < 0.3)
+        return;
+    vec2 m = (q + r) * 0.5;
+    m += normalize(m + vec2(1e-3)) * length(r - q) * (0.04 + 0.08 * hash(vec2(seed + fj, fi + 420.0)));
+    crackSeg(p, q, m, ring, ring, line, half_, tip);
+    crackSeg(p, m, r, ring, ring, line, half_, tip);
+}
+
+// the glass cracked at the hit, all round it: jagged rays of straight bits with sharp bends,
+// branching off now and then and breaking up at their tips; a web of chords between them; in the
+// middle the glass crushed into little shards, each its own bit of the picture, a little off and
+// lit its own way. Lines one physical pixel thick: dark on the picture, catching the light on the
+// black of the leaked crystal. They shoot out in the first 0.12 s and go with the blot.
+void cracks(vec4 h, float w, vec2 s, float v, inout vec3 col) {
     if (h.z < 0.0)
         return;
     float size = grown(h.z);
     if (size <= 0.0)
         return;
     float seed = h.w;
-    float R = radius(h, w);
     vec2 d = s - h.xy;
     float r = length(d);
-    float reach = R * (2.6 + 1.2 * hash(vec2(seed, 7.7))) * size * clamp(h.z / 0.12, 0.0, 1.0);
-    if (r > reach)
+    float full = radius(h, w) * (2.6 + 1.2 * hash(vec2(seed, 7.7))) * size;
+    if (r > full * clamp(h.z / 0.12, 0.0, 1.0))
         return;
-    float up = away(h);
-    float a = atan(d.y * up, d.x);
+    float pa = atan(d.y, d.x);
+    bool dark = v < 0.0;
+
+    // the crushed middle: shards, their edges cracks too
+    float core = full * 0.14 * (0.8 + 0.4 * noise(vec2(pa * 2.0 + seed, seed)));
+    if (r < core * 1.4) {
+        float cs = g_px * 9.0;
+        vec2 g = d / cs;
+        vec2 gi = floor(g);
+        float n1 = 1e5;
+        float n2 = 1e5;
+        vec2 id = vec2(0.0);
+        vec2 pt = vec2(0.0);
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                vec2 c = gi + vec2(float(x), float(y));
+                vec2 o = c + vec2(hash(c + seed), hash(c + seed + 3.1));
+                float dd = length(g - o);
+                if (dd < n1) {
+                    n2 = n1;
+                    n1 = dd;
+                    id = c;
+                    pt = o;
+                } else if (dd < n2) {
+                    n2 = dd;
+                }
+            }
+        }
+        if (length(pt) * cs < core) {
+            if ((n2 - n1) * cs < 1.0) {
+                col = dark ? vec3(0.62, 0.58, 0.72) : mix(col, vec3(0.04), 0.85);
+                return;
+            }
+            float lit = hash(id + seed * 2.3);
+            if (dark) {
+                if (lit > 0.6)
+                    col = vec3(0.1, 0.08, 0.15) * (lit - 0.4) * 2.5;
+            } else {
+                vec2 shift = floor((vec2(hash(id + seed * 4.7), hash(id + seed * 5.9)) - 0.5)
+                                 * g_px * 8.0);
+                col = texture2D(tex, toTex(s + shift)).rgb * (0.78 + 0.4 * lit);
+            }
+            return;
+        }
+    }
+
     float line = 1e5;
-    for (int i = 0; i < 9; i++) {
+    float half_ = 0.5;
+    float tip = 0.0;
+    // the first ray's bends (the web closes round) and the previous one's
+    vec2 f1 = vec2(0.0);
+    vec2 f2 = vec2(0.0);
+    vec2 f3 = vec2(0.0);
+    vec2 q1 = vec2(0.0);
+    vec2 q2 = vec2(0.0);
+    vec2 q3 = vec2(0.0);
+    float first = 0.0;
+    float prev = 0.0;
+    for (int i = 0; i < RAYS; i++) {
         float fi = float(i);
-        float ai = (0.04 + 0.92 * (fi + 0.8 * hash(vec2(seed, fi + 200.0))) / 9.0) * PI;
-        float len = reach * (0.45 + 0.55 * hash(vec2(seed, fi + 220.0)));
-        vec2 dir = vec2(cos(ai), sin(ai) * up);
-        float along = dot(d, dir);
-        if (along <= 0.0 || along > len)
-            continue;
-        float kink = (noise(vec2(along / (g_px * 18.0), fi * 3.1 + seed)) - 0.5) * g_px * 14.0
-            * (along / len + 0.2);
-        float perp = dot(d, vec2(-dir.y, dir.x)) + kink;
-        if (abs(perp) < abs(line))
-            line = perp;
+        float base = (fi + 0.8 * hash(vec2(seed, fi + 200.0))) / float(RAYS) * 2.0 * PI;
+        float len = full * (0.55 + 0.45 * hash(vec2(seed, fi + 220.0)));
+        float off = abs(mod(pa - base + PI, 2.0 * PI) - PI);
+        bool near = off < 0.75 || r < g_px * 16.0;
+        vec2 a = vec2(0.0);
+        vec2 p1 = vec2(0.0);
+        vec2 p2 = vec2(0.0);
+        vec2 p3 = vec2(0.0);
+        for (int j = 0; j < SEGS; j++) {
+            float fj = float(j);
+            // its bits keep to its way, each bent off it its own way: sharp bends, no drift
+            float dir = base + (hash(vec2(seed + fj * 1.7, fi + 260.0)) - 0.5) * 0.7;
+            float l = len / float(SEGS) * (0.7 + 0.6 * hash(vec2(seed + fj * 2.3, fi + 280.0)));
+            vec2 b = a + l * vec2(cos(dir), sin(dir));
+            if (near) {
+                crackSeg(d, a, b, fj / float(SEGS), (fj + 1.0) / float(SEGS), line, half_, tip);
+                if ((j == 1 || j == 3) && hash(vec2(seed + fj, fi + 300.0)) < 0.55) {
+                    float turn = hash(vec2(seed + fj, fi + 320.0)) < 0.5 ? -1.0 : 1.0;
+                    float ba = dir + turn * (0.5 + 0.45 * hash(vec2(seed + fj, fi + 340.0)));
+                    float bl = len * (0.1 + 0.1 * hash(vec2(seed + fj, fi + 360.0)));
+                    vec2 c = b + bl * vec2(cos(ba), sin(ba));
+                    float bb = ba + (hash(vec2(seed + fj, fi + 380.0)) - 0.5) * 0.6;
+                    vec2 e = c + bl * 0.8 * vec2(cos(bb), sin(bb));
+                    float at = (fj + 1.0) / float(SEGS);
+                    crackSeg(d, b, c, at, at + 0.2, line, half_, tip);
+                    crackSeg(d, c, e, at + 0.2, at + 0.4, line, half_, tip);
+                }
+            }
+            if (j == 0)
+                p1 = b;
+            else if (j == 1)
+                p2 = b;
+            else if (j == 2)
+                p3 = b;
+            a = b;
+        }
+        if (i == 0) {
+            f1 = p1;
+            f2 = p2;
+            f3 = p3;
+            first = base;
+        } else if (abs(mod(pa - (prev + base) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
+            crackChord(d, q1, p1, seed, fi, 0.0, 0.25, line, half_, tip);
+            crackChord(d, q2, p2, seed, fi, 1.0, 0.45, line, half_, tip);
+            crackChord(d, q3, p3, seed, fi, 2.0, 0.65, line, half_, tip);
+        }
+        q1 = p1;
+        q2 = p2;
+        q3 = p3;
+        prev = base;
     }
-    for (int k = 0; k < 3; k++) {
-        float fk = float(k);
-        if (hash(vec2(floor(a / (PI / 9.0)), seed + fk * 13.0)) < 0.45)
-            continue;
-        float rk = reach * (0.18 + 0.22 * fk) * (0.9 + 0.2 * hash(vec2(seed, fk + 240.0)));
-        float dr = r - rk + (noise(vec2(a * 6.0, fk + seed)) - 0.5) * g_px * 10.0;
-        if (abs(dr) < abs(line))
-            line = dr;
+    // the last ray to the first, round the circle
+    if (abs(mod(pa - (prev + first + 2.0 * PI) * 0.5 + PI, 2.0 * PI) - PI) < 0.9) {
+        crackChord(d, q1, f1, seed, float(RAYS), 0.0, 0.25, line, half_, tip);
+        crackChord(d, q2, f2, seed, float(RAYS), 1.0, 0.45, line, half_, tip);
+        crackChord(d, q3, f3, seed, float(RAYS), 2.0, 0.65, line, half_, tip);
     }
-    float t = abs(line);
+
     // the contact itself: a white star of crushed glass flashing for a few frames
     if (h.z < 0.1 && r < g_px * (8.0 + 46.0 * h.z / 0.1)
             && hash(floor(s / (g_px * 2.0)) + vec2(g_step, seed)) < 0.6 * (1.0 - h.z / 0.1) + 0.2)
         col = mix(col, vec3(1.0), 0.9 * (1.0 - h.z / 0.1));
-    if (t < g_px * 0.9)
-        col = mix(col, vec3(0.04), 0.85);
-    else if (line > 0.0 && t < g_px * 2.0)
+    float t = abs(line);
+    // out at the tips the line breaks up into single pixels
+    if (tip > 0.65 && hash(floor(s) + seed) < (tip - 0.65) * 2.2)
+        return;
+    if (t < half_)
+        col = dark ? vec3(0.62, 0.58, 0.72) : mix(col, vec3(0.04), 0.85);
+    else if (!dark && line > 0.0 && t < half_ + 1.0)
         col = mix(col, vec3(1.0), 0.45);
 }
 
@@ -406,12 +532,12 @@ void main() {
         }
     }
 
-    cracks(g_h0, g_wa.x, s, col);
-    cracks(g_h1, g_wa.y, s, col);
-    cracks(g_h2, g_wa.z, s, col);
-    cracks(g_h3, g_wb.x, s, col);
-    cracks(g_h4, g_wb.y, s, col);
-    cracks(g_h5, g_wb.z, s, col);
+    cracks(g_h0, g_wa.x, s, v, col);
+    cracks(g_h1, g_wa.y, s, v, col);
+    cracks(g_h2, g_wa.z, s, v, col);
+    cracks(g_h3, g_wb.x, s, v, col);
+    cracks(g_h4, g_wb.y, s, v, col);
+    cracks(g_h5, g_wb.z, s, v, col);
 
     vec4 color = vec4(col, 1.0);
 #if defined(NO_ALPHA)

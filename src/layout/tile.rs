@@ -1771,9 +1771,9 @@ impl<W: LayoutElement> Tile<W> {
         self.window().set_offscreen_data(None);
 
         let fly_look = (self.fly.as_ref())
-            .map(|fly| (fly.angle(), fly.trail()))
-            .filter(|(angle, trail)| *angle != 0. || !trail.is_empty());
-        if let Some((angle, trail)) = fly_look {
+            .map(|fly| (fly.angle(), fly.scale(), fly.trail()))
+            .filter(|(angle, zoom, trail)| *angle != 0. || *zoom != 1. || !trail.is_empty());
+        if let Some((angle, zoom, trail)) = fly_look {
             let mut ctx = ctx.as_gles();
             let mut elements = Vec::new();
             self.render_inner(
@@ -1794,6 +1794,7 @@ impl<W: LayoutElement> Tile<W> {
                             location + elem.offset(),
                             elem.logical_size(),
                             angle,
+                            zoom,
                             &trail,
                             scale,
                             tile_alpha,
@@ -2063,18 +2064,24 @@ impl<W: LayoutElement> Tile<W> {
 }
 
 /// angel-niri (desk_throw.rs): the tile's offscreen `texture` (at `loc`, `size`) drawn turned by
-/// `angle` in whole pixels of the pixel corners, its afterimages `trail` behind it, in a box with
-/// room for the turn and the trail.
+/// `angle` and grown by `zoom` about its middle in whole pixels of the pixel corners, its
+/// afterimages `trail` behind it, in a box with room for the turn, the growth and the trail.
+#[allow(clippy::too_many_arguments)]
 fn throw_element(
     texture: &GlesTexture,
     loc: Point<f64, Logical>,
     size: Size<f64, Logical>,
     angle: f64,
+    zoom: f64,
     trail: &[crate::desk_throw::Ghost],
     scale: Scale<f64>,
     alpha: f32,
 ) -> ShaderRenderElement {
-    let turned = |angle: f64| (size.w.max(size.h) * angle.abs().sin()).ceil() + 8.;
+    let pixel = f64::from(crate::pixel_corners::pixel()).max(2.);
+    // it grows in steps of two pixels of its width
+    let zoom = (zoom * size.w / (2. * pixel)).round() * 2. * pixel / size.w.max(1.);
+    let grown = ((zoom - 1.).max(0.) * size.w.max(size.h) / 2.).ceil();
+    let turned = |angle: f64| (size.w.max(size.h) * zoom * angle.abs().sin()).ceil() + 8. + grown;
     let room = turned(angle);
     let mut lo = Point::<f64, Logical>::from((-room, -room));
     let mut hi = Point::<f64, Logical>::from((size.w + room, size.h + room));
@@ -2089,7 +2096,6 @@ fn throw_element(
     let hi = hi.to_physical_precise_ceil(scale).to_logical(scale);
     let area = Rectangle::new(loc + lo, (hi - lo).to_size());
     let tile_loc = loc - area.loc;
-    let pixel = f64::from(crate::pixel_corners::pixel()).max(2.);
     let ghost = |i: usize| {
         trail.get(i).map_or([0., 0., 0., 0.], |g| {
             [
@@ -2115,6 +2121,7 @@ fn throw_element(
             Uniform::new("throw_tile_loc", [tile_loc.x as f32, tile_loc.y as f32]),
             Uniform::new("throw_tile_size", [size.w as f32, size.h as f32]),
             Uniform::new("throw_angle", angle as f32),
+            Uniform::new("throw_zoom", zoom as f32),
             Uniform::new("throw_pixel", pixel as f32),
             Uniform::new("throw_ghost0", ghost(0)),
             Uniform::new("throw_ghost1", ghost(1)),
