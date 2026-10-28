@@ -789,6 +789,38 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Hide an output's windows while a layer-shell namespace is up on it (angel-niri).
+    ///
+    /// While a surface of that namespace is mapped on an output, the output's windows are not
+    /// drawn: a shell's Mission Control shows the desktop under its window cards.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Hide an output's windows while a layer namespace is up on it")
+    )]
+    SetHideWindowsLayer {
+        /// The layer-shell namespace.
+        #[cfg_attr(feature = "clap", arg(long))]
+        namespace: String,
+        /// Hide them (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
+    /// Show the desktop: the windows part to the side edges, or come back (angel-niri).
+    ///
+    /// As on macOS: the windows of the output's workspace move to the nearer side, a strip of each
+    /// left in sight. Again, a click on a window, focusing one, a window opened or closed there or
+    /// another workspace bring them back.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Show the desktop (windows part to the sides)")
+    )]
+    ShowDesktop {
+        /// Name of the output; the focused one if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        output: Option<String>,
+    },
     /// Minimize a window: take it out of the layout until it is focused again.
     #[cfg_attr(feature = "clap", clap(about = "Minimize the focused window"))]
     MinimizeWindow {

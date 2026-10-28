@@ -316,6 +316,10 @@ pub enum Action {
     #[knuffel(skip)]
     SetCastOnlyLayer(String, bool),
     #[knuffel(skip)]
+    SetHideWindowsLayer(String, bool),
+    #[knuffel(skip)]
+    ShowDesktop(Option<String>),
+    #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
     SetPixelOverview(f64, String),
@@ -710,6 +714,10 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetCastOnlyLayer { namespace, on } => {
                 Self::SetCastOnlyLayer(namespace, on)
             }
+            niri_ipc::Action::SetHideWindowsLayer { namespace, on } => {
+                Self::SetHideWindowsLayer(namespace, on)
+            }
+            niri_ipc::Action::ShowDesktop { output } => Self::ShowDesktop(output),
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }

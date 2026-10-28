@@ -1061,6 +1061,15 @@ impl State {
                 crate::cast_only::set(namespace, on);
                 self.niri.queue_redraw_all();
             }
+            Action::SetHideWindowsLayer(namespace, on) => {
+                crate::desk_peek::set_hide_layer(namespace, on);
+                self.niri.queue_redraw_all();
+            }
+            Action::ShowDesktop(output) => {
+                let output = output.and_then(|name| self.niri.output_by_name_match(&name).cloned());
+                self.niri.layout.toggle_desk_peek(output.as_ref());
+                self.niri.queue_redraw_all();
+            }
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }

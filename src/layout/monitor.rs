@@ -81,6 +81,8 @@ pub struct Monitor<W: LayoutElement> {
     /// angel-niri (stacking.rs): where a dragged window will snap, and on which workspace.
     snap_frame: SnapFrame,
     snap_frame_ws: Option<WorkspaceId>,
+    /// angel-niri (desk_peek.rs): the windows parted to show the desktop.
+    desk_peek: Option<crate::desk_peek::Peek<W::Id>>,
     /// Whether the overview is open.
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
@@ -349,6 +351,7 @@ impl<W: LayoutElement> Monitor<W> {
             insert_hint_render_loc: None,
             snap_frame: SnapFrame::default(),
             snap_frame_ws: None,
+            desk_peek: None,
             overview_open: false,
             overview_progress: None,
             workspace_switch: None,
@@ -408,6 +411,87 @@ impl<W: LayoutElement> Monitor<W> {
 
     pub fn active_workspace(&mut self) -> &mut Workspace<W> {
         &mut self.workspaces[self.active_workspace_idx]
+    }
+
+    /// angel-niri (desk_peek.rs): the windows parted to show the desktop.
+    pub fn is_desk_peek(&self) -> bool {
+        self.desk_peek.is_some()
+    }
+
+    fn desk_peek_now(&self) -> (WorkspaceId, Vec<W::Id>, Option<W::Id>) {
+        let ws = self.active_workspace_ref();
+        let windows = ws.windows().map(|w| w.id().clone()).collect();
+        (ws.id(), windows, ws.active_window().map(|w| w.id().clone()))
+    }
+
+    /// angel-niri (desk_peek.rs): the windows part to the side edges, or come back.
+    pub fn toggle_desk_peek(&mut self) {
+        if self.desk_peek.is_some() {
+            self.end_desk_peek();
+            return;
+        }
+        let ws = self.active_workspace();
+        let width = ws.view_size().w;
+        let shifts: Vec<(W::Id, f64)> = ws
+            .tiles_with_render_positions()
+            .map(|(tile, pos, visible)| {
+                let x = pos.x - tile.desk_peek_offset();
+                let dx = if visible {
+                    crate::desk_peek::shift(x, tile.tile_size().w, width)
+                } else {
+                    0.
+                };
+                (tile.window().id().clone(), dx)
+            })
+            .collect();
+        if shifts.iter().all(|(_, dx)| *dx == 0.) {
+            return;
+        }
+        for tile in ws.tiles_mut() {
+            let id = tile.window().id();
+            if let Some((_, dx)) = shifts.iter().find(|(w, _)| w == id) {
+                tile.desk_peek_out(*dx);
+            }
+        }
+        let (workspace, windows, focus) = self.desk_peek_now();
+        self.desk_peek = Some(crate::desk_peek::Peek {
+            workspace,
+            windows,
+            focus,
+        });
+    }
+
+    /// angel-niri (desk_peek.rs): the parted windows come back.
+    pub fn end_desk_peek(&mut self) {
+        let Some(peek) = self.desk_peek.take() else {
+            return;
+        };
+        for ws in &mut self.workspaces {
+            if ws.id() == peek.workspace {
+                for tile in ws.tiles_mut() {
+                    tile.desk_peek_back();
+                }
+            }
+        }
+    }
+
+    /// angel-niri (desk_peek.rs): back once the workspace in front, its windows or the focused
+    /// one change.
+    pub(super) fn refresh_desk_peek(&mut self) {
+        let Some(peek) = &self.desk_peek else {
+            return;
+        };
+        let (workspace, windows, focus) = self.desk_peek_now();
+        if !peek.still(workspace, &windows, focus.as_ref()) {
+            self.end_desk_peek();
+        }
+    }
+
+    /// angel-niri (desk_peek.rs): whether this window is on its workspace in front.
+    pub(super) fn has_window_in_front(&self, window: &W::Id) -> bool {
+        self.active_workspace_ref()
+            .windows()
+            .any(|w| w.id() == window)
     }
 
     pub fn idx_of_ws(&self, id: WorkspaceId) -> Option<usize> {

@@ -651,3 +651,67 @@ fn stacking_throws_one_window_at_a_time() {
     }
     crate::desk_throw::set(false);
 }
+
+// show-desktop: the windows part to the nearer side edge, a strip left in sight, no window has
+// the keyboard; picking one brings them all back, and so does a window opened there
+#[test]
+fn desk_peek_parts_windows_and_brings_them_back() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 400, 300);
+    let b = open(&mut f, id, 400, 300);
+    set_stacking(&mut f, id, true);
+    f.niri_complete_animations();
+    // one on each side
+    use niri_ipc::PositionChange::SetFixed;
+    let layout = &mut f.niri().layout;
+    layout.move_floating_window(Some(&a), SetFixed(100.), SetFixed(300.), false);
+    layout.move_floating_window(Some(&b), SetFixed(1300.), SetFixed(300.), false);
+    f.niri_complete_animations();
+
+    let places = |f: &mut Fixture| -> Vec<(Window, f64, f64)> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.tiles_with_render_positions()
+            .map(|(tile, pos, _)| (tile.window().window.clone(), pos.x, tile.tile_size().w))
+            .collect()
+    };
+    let rest = places(&mut f);
+
+    f.niri().layout.toggle_desk_peek(None);
+    f.niri_complete_animations();
+    f.niri_state().update_keyboard_focus();
+    for (win, x, w) in places(&mut f) {
+        if win == a {
+            assert_eq!(x + w, crate::desk_peek::STRIP, "the left one");
+        } else {
+            assert_eq!(x, 1920. - crate::desk_peek::STRIP, "the right one");
+        }
+    }
+    assert!(
+        matches!(
+            f.niri().keyboard_focus,
+            crate::niri::KeyboardFocus::Layout { surface: None }
+        ),
+        "a parted window has the keyboard"
+    );
+
+    // picked (its strip clicked, the taskbar): all come back
+    f.niri().layout.activate_window(&a);
+    f.niri_complete_animations();
+    let back = |f: &mut Fixture| {
+        let now = places(f);
+        for r in &rest {
+            assert!(now.contains(r), "{r:?} not back: {now:?}");
+        }
+    };
+    back(&mut f);
+
+    // again, and a new window there brings them back too
+    f.niri().layout.toggle_desk_peek(None);
+    f.niri_complete_animations();
+    assert!(!places(&mut f).contains(&rest[0]));
+    let _c = open(&mut f, id, 200, 200);
+    f.niri_complete_animations();
+    back(&mut f);
+}

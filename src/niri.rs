@@ -1358,10 +1358,13 @@ impl State {
                     .map(|surface| KeyboardFocus::LayerShell { surface })
             };
 
+            // angel-niri (desk_peek.rs): with the windows parted to show the desktop, none has
+            // the keyboard
             let layout_focus = || {
                 self.niri
                     .layout
                     .focus()
+                    .filter(|_| !mon.is_desk_peek())
                     .map(|win| win.toplevel().wl_surface().clone())
                     .map(|surface| KeyboardFocus::Layout {
                         surface: Some(surface),
@@ -4705,6 +4708,13 @@ impl Niri {
         // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
 
+        // angel-niri (desk_peek.rs): a shell's Mission Control up here: no windows, the desktop
+        // under its cards
+        let windows = !layer_map.layers().any(|layer| {
+            crate::desk_peek::hides_windows(layer.namespace())
+                && self.mapped_layer_surfaces.contains_key(layer)
+        });
+
         // We use macros instead of closures to avoid borrowing issues (renderer and push() go
         // into different functions).
         macro_rules! push_popups_from_layer {
@@ -4767,12 +4777,18 @@ impl Niri {
         // When rendering above the top layer, we put the regular monitor elements first.
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
-            self.layout
-                .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
+            if windows {
+                self.layout
+                    .render_interactive_move_for_output(ctx.r(), output, &mut |elem| {
+                        push(elem.into())
+                    });
 
-            mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
+                mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| {
+                    push(elem.into())
+                });
 
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+                mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            }
 
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
@@ -4790,10 +4806,16 @@ impl Niri {
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
 
-            self.layout
-                .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
+            if windows {
+                self.layout
+                    .render_interactive_move_for_output(ctx.r(), output, &mut |elem| {
+                        push(elem.into())
+                    });
 
-            mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
+                mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| {
+                    push(elem.into())
+                });
+            }
 
             // Macro instead of closure to avoid borrowing push().
             macro_rules! process {
@@ -4813,7 +4835,9 @@ impl Niri {
                 push_popups_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
             }
 
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            if windows {
+                mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            }
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 // The render element namespace. This will be set to the workspace index for
@@ -4831,7 +4855,11 @@ impl Niri {
 
             // angel-niri (scene.rs): windows behind the scene, between the bottom and background
             // layers (workspaces don't overlap, so all of them here keeps each one's order).
-            mon.render_workspaces_behind_scene(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            if windows {
+                mon.render_workspaces_behind_scene(ctx.r(), focus_ring, &mut |elem| {
+                    push(elem.into())
+                });
+            }
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 let ns = Some(ws.id().get() as usize);

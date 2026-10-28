@@ -140,6 +140,9 @@ pub struct Tile<W: LayoutElement> {
     shade_anim: Option<Animation>,
     /// angel-niri (stacking.rs): a hop up and back as the mode switches.
     hop_anim: Option<Animation>,
+    /// angel-niri (desk_peek.rs): how far across it parts to show the desktop, how far it is
+    /// there (0 .. 1) and the way it goes now.
+    desk_peek: Option<(f64, f64, Option<Animation>)>,
     /// angel-niri (desk_throw.rs): thrown onto desk 1 or back off it as stacking starts or ends.
     fly: Option<crate::desk_throw::Fly>,
     /// angel-niri (desk_throw.rs): crushed by a hit for real: the window's own size to go back
@@ -275,6 +278,7 @@ impl<W: LayoutElement> Tile<W> {
             title_active: false,
             shade_anim: None,
             hop_anim: None,
+            desk_peek: None,
             fly: None,
             desk_squash: None,
             shade_seen: false,
@@ -502,6 +506,14 @@ impl<W: LayoutElement> Tile<W> {
         if self.hop_anim.as_ref().is_some_and(|a| a.is_done()) {
             self.hop_anim = None;
         }
+        if let Some((_, at, anim)) = &mut self.desk_peek {
+            if let Some(a) = anim.take_if(|a| a.is_done()) {
+                *at = a.to();
+            }
+            if anim.is_none() && *at == 0. {
+                self.desk_peek = None;
+            }
+        }
         // a window leaving keeps its flight's end (below the output) until it goes
         if self.fly.as_ref().is_some_and(|f| f.is_done() && !f.leaving) {
             self.fly = None;
@@ -567,6 +579,7 @@ impl<W: LayoutElement> Tile<W> {
             || self.wobble.is_some()
             || self.shade_anim.is_some()
             || self.hop_anim.is_some()
+            || self.desk_peek.as_ref().is_some_and(|(_, _, a)| a.is_some())
             || self.fly.as_ref().is_some_and(|f| !f.is_done())
     }
 
@@ -786,7 +799,32 @@ impl<W: LayoutElement> Tile<W> {
             offset += fly.offset();
         }
 
+        offset.x += self.desk_peek_offset();
+
         offset
+    }
+
+    /// angel-niri (desk_peek.rs): how far across it is now, parting to show the desktop.
+    pub fn desk_peek_offset(&self) -> f64 {
+        (self.desk_peek.as_ref()).map_or(0., |(dx, at, anim)| {
+            dx * anim.as_ref().map_or(*at, Animation::value)
+        })
+    }
+
+    /// angel-niri (desk_peek.rs): parts `dx` across to show the desktop, from wherever it is.
+    pub fn desk_peek_out(&mut self, dx: f64) {
+        let now = self.desk_peek_offset();
+        let from = if dx == 0. { 0. } else { now / dx };
+        let anim = crate::desk_peek::animation(self.clock.clone(), from, 1.);
+        self.desk_peek = Some((dx, from, Some(anim)));
+    }
+
+    /// angel-niri (desk_peek.rs): comes back from the edge.
+    pub fn desk_peek_back(&mut self) {
+        if let Some((_, at, anim)) = &mut self.desk_peek {
+            *at = anim.as_ref().map_or(*at, Animation::value);
+            *anim = Some(crate::desk_peek::animation(self.clock.clone(), *at, 0.));
+        }
     }
 
     /// angel-niri (desk_throw.rs): throws the tile; as in `Fly::new`. Not with the window
@@ -965,6 +1003,8 @@ impl<W: LayoutElement> Tile<W> {
     pub fn stop_move_animations(&mut self) {
         self.move_x_animation = None;
         self.move_y_animation = None;
+        // (taken out of its workspace, it is in place at once)
+        self.desk_peek = None;
     }
 
     pub fn set_anim_y_between_workspaces(&mut self) {

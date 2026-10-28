@@ -1800,6 +1800,13 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
 
+        // angel-niri (desk_peek.rs): a window picked brings the parted ones back, itself too
+        for mon in monitors.iter_mut() {
+            if mon.has_window_in_front(window) {
+                mon.end_desk_peek();
+            }
+        }
+
         for (monitor_idx, mon) in monitors.iter_mut().enumerate() {
             for (workspace_idx, ws) in mon.workspaces.iter_mut().enumerate() {
                 if ws.activate_window(window) {
@@ -1817,6 +1824,18 @@ impl<W: LayoutElement> Layout<W> {
                     return;
                 }
             }
+        }
+    }
+
+    /// angel-niri (desk_peek.rs): the windows of the output (the active one if not given) part to
+    /// show the desktop, or come back.
+    pub fn toggle_desk_peek(&mut self, output: Option<&Output>) {
+        let mon = match output {
+            Some(output) => self.monitor_for_output_mut(output),
+            None => self.active_monitor(),
+        };
+        if let Some(mon) = mon {
+            mon.toggle_desk_peek();
         }
     }
 
@@ -5349,6 +5368,8 @@ impl<W: LayoutElement> Layout<W> {
                     let is_active = self.is_active
                         && idx == *active_monitor_idx
                         && !matches!(self.interactive_move, Some(InteractiveMoveState::Moving(_)));
+
+                    mon.refresh_desk_peek();
 
                     if ongoing_scrolling_dnd.is_some() && self.overview_open {
                         // Begin the scroll on new monitors and when opening the overview.
