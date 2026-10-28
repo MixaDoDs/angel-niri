@@ -79,6 +79,7 @@ impl GlobalShortcuts {
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: false,
+            forward: true,
             hotkey_overlay_title: None,
         });
         action

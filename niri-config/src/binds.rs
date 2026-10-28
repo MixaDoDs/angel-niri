@@ -27,6 +27,7 @@ pub struct Bind {
     pub cooldown: Option<Duration>,
     pub allow_when_locked: bool,
     pub allow_inhibiting: bool,
+    pub forward: bool,
     pub hotkey_overlay_title: Option<Option<String>>,
 }
 
@@ -1022,6 +1023,7 @@ where
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            forward: false,
             hotkey_overlay_title: None,
         };
 
@@ -1199,6 +1201,7 @@ where
             cooldown,
             allow_when_locked,
             allow_inhibiting,
+            forward: false,
             hotkey_overlay_title,
         })
     }

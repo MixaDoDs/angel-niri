@@ -3397,6 +3397,7 @@ impl State {
                                 cooldown: None,
                                 allow_when_locked: false,
                                 allow_inhibiting: false,
+                                forward: false,
                                 hotkey_overlay_title: None,
                             });
                             let bind_right = Some(Bind {
@@ -3409,6 +3410,7 @@ impl State {
                                 cooldown: None,
                                 allow_when_locked: false,
                                 allow_inhibiting: false,
+                                forward: false,
                                 hotkey_overlay_title: None,
                             });
                             (bind_left, bind_right)
@@ -3457,6 +3459,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         let bind_down = Some(Bind {
@@ -3469,6 +3472,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         (bind_up, bind_down)
@@ -3483,6 +3487,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         let bind_down = Some(Bind {
@@ -3495,6 +3500,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         (bind_up, bind_down)
@@ -4747,7 +4753,13 @@ fn released_key_intercept_result(
 fn bind_intercept_result(bind: Option<Bind>, forward: bool) -> ShouldInterceptResult {
     match (bind, forward) {
         (Some(bind), true) => ShouldInterceptResult::ForwardAndHandle(bind),
-        (Some(bind), false) => ShouldInterceptResult::InterceptAndHandle(bind),
+        (Some(bind), false) => {
+            if bind.forward {
+                ShouldInterceptResult::ForwardAndHandle(bind)
+            } else {
+                ShouldInterceptResult::InterceptAndHandle(bind)
+            }
+        }
         (None, true) => ShouldInterceptResult::Forward,
         (None, false) => ShouldInterceptResult::InterceptOnly,
     }
@@ -4818,9 +4830,14 @@ fn should_intercept_key<'a>(
                 }
                 if bind.has_press() {
                     suppressed_keys.insert(key_code);
-                    // A bind with a press action takes the key press. Applications will still learn
-                    // about the modifier state via `advertise_modifier_state()`.
-                    ShouldInterceptResult::InterceptAndHandle(bind)
+                    if bind.forward {
+                        ShouldInterceptResult::ForwardAndHandle(bind)
+                    } else {
+                        // A bind with a press action takes the key press. Applications will still
+                        // learn about the modifier state via
+                        // `advertise_modifier_state()`.
+                        ShouldInterceptResult::InterceptAndHandle(bind)
+                    }
                 } else {
                     // This is to ensure that, if you have a modifier-triggered release bind like
                     // Ctrl+Alt, We still forward the Ctrl and Alt presses to the application
@@ -4833,12 +4850,20 @@ fn should_intercept_key<'a>(
                 }
                 suppressed_keys.insert(key_code);
                 if bind.has_press() {
-                    ShouldInterceptResult::InterceptAndHandle(bind)
+                    if bind.forward {
+                        ShouldInterceptResult::ForwardAndHandle(bind)
+                    } else {
+                        ShouldInterceptResult::InterceptAndHandle(bind)
+                    }
                 } else {
-                    // Release-only bind: intercept the key press so that it doesn't reach the
-                    // client, and remember to trigger the release action when the key is
-                    // released.
-                    ShouldInterceptResult::InterceptOnly
+                    if bind.forward {
+                        ShouldInterceptResult::Forward
+                    } else {
+                        // Release-only bind: intercept the key press so that it doesn't reach the
+                        // client, and remember to trigger the release action when the key is
+                        // released.
+                        ShouldInterceptResult::InterceptOnly
+                    }
                 }
             }
         }
@@ -4886,6 +4911,7 @@ fn find_bind<'a>(
             // It also makes no sense to inhibit the default power key handling.
             // Hardcoded binds must never be inhibited.
             allow_inhibiting: false,
+            forward: false,
             hotkey_overlay_title: None,
         });
     }
@@ -5256,6 +5282,7 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
         cooldown: None,
         allow_when_locked: false,
         allow_inhibiting: false,
+        forward: false,
         hotkey_overlay_title: None,
     })
 }
@@ -5729,6 +5756,7 @@ mod tests {
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            forward: false,
             hotkey_overlay_title: None,
         }
     }

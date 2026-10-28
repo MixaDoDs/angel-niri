@@ -773,6 +773,7 @@ impl ScreenshotUi {
                 cooldown: None,
                 allow_when_locked: true,
                 allow_inhibiting: false,
+                forward: false,
                 hotkey_overlay_title: None,
             }
         }
