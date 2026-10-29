@@ -27,6 +27,7 @@ pub struct Bind {
     pub cooldown: Option<Duration>,
     pub allow_when_locked: bool,
     pub allow_inhibiting: bool,
+    pub forward: bool,
     pub hotkey_overlay_title: Option<Option<String>>,
 }
 
@@ -589,6 +590,10 @@ pub enum Action {
     MruSetScope(MruScope),
     #[knuffel(skip)]
     MruCycleScope,
+    #[knuffel(skip)]
+    GlobalShortcutActivateAction(u32),
+    #[knuffel(skip)]
+    GlobalShortcutDeactivateAction(u32),
 
     // Doesn't look like knuffel allows gating on #[cfg(test)]...
     #[knuffel(skip)]
@@ -1191,6 +1196,7 @@ where
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            forward: false,
             hotkey_overlay_title: None,
         };
 
@@ -1368,6 +1374,7 @@ where
             cooldown,
             allow_when_locked,
             allow_inhibiting,
+            forward: false,
             hotkey_overlay_title,
         })
     }

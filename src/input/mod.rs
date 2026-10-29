@@ -50,6 +50,8 @@ use self::resize_grab::ResizeGrab;
 use self::spatial_movement_grab::SpatialMovementGrab;
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_a11y::KbMonBlock;
+#[cfg(feature = "dbus")]
+use crate::dbus::gnome_shell::GlobalShortcuts;
 use crate::layout::scrolling::ScrollDirection;
 use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, Niri, PointerVisibility, State};
@@ -684,12 +686,15 @@ impl State {
 
                 let is_locked = this.niri.is_locked();
                 let is_in_screenshot = this.niri.screenshot_ui.is_open();
+
                 let res = {
                     let config = this.niri.config.borrow();
                     let bindings = make_binds_iter(
                         &config,
                         &this.niri.screenshot_ui,
                         &mut this.niri.window_mru_ui,
+                        #[cfg(feature = "dbus")]
+                        &this.niri.global_shortcuts,
                         modifiers,
                     );
 
@@ -2902,6 +2907,30 @@ impl State {
                     self.niri.queue_redraw_mru_output();
                 }
             }
+            Action::GlobalShortcutActivateAction(action) => {
+                #[cfg(feature = "dbus")]
+                {
+                    let Some(shell) = self.niri.gnome_shell.as_ref() else {
+                        warn!(
+                        "attempted to activate action {action} before gnome_shell was initialized"
+                    );
+                        return;
+                    };
+                    shell.activate_action(action);
+                }
+            }
+            Action::GlobalShortcutDeactivateAction(action) => {
+                #[cfg(feature = "dbus")]
+                {
+                    let Some(shell) = self.niri.gnome_shell.as_ref() else {
+                        warn!(
+                        "attempted to deactivate action {action} before gnome_shell was initialized"
+                    );
+                        return;
+                    };
+                    shell.deactivate_action(action);
+                }
+            }
             Action::TestAction => {
                 #[cfg(test)]
                 {
@@ -3285,6 +3314,8 @@ impl State {
             &config,
             &self.niri.screenshot_ui,
             &mut self.niri.window_mru_ui,
+            #[cfg(feature = "dbus")]
+            &self.niri.global_shortcuts,
             modifiers,
         );
 
@@ -3725,6 +3756,7 @@ impl State {
                                 cooldown: None,
                                 allow_when_locked: false,
                                 allow_inhibiting: false,
+                                forward: false,
                                 hotkey_overlay_title: None,
                             });
                             let bind_right = Some(Bind {
@@ -3737,6 +3769,7 @@ impl State {
                                 cooldown: None,
                                 allow_when_locked: false,
                                 allow_inhibiting: false,
+                                forward: false,
                                 hotkey_overlay_title: None,
                             });
                             (bind_left, bind_right)
@@ -3785,6 +3818,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         let bind_down = Some(Bind {
@@ -3797,6 +3831,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         (bind_up, bind_down)
@@ -3811,6 +3846,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         let bind_down = Some(Bind {
@@ -3823,6 +3859,7 @@ impl State {
                             cooldown: Some(Duration::from_millis(50)),
                             allow_when_locked: false,
                             allow_inhibiting: false,
+                            forward: false,
                             hotkey_overlay_title: None,
                         });
                         (bind_up, bind_down)
@@ -5075,7 +5112,13 @@ fn released_key_intercept_result(
 fn bind_intercept_result(bind: Option<Bind>, forward: bool) -> ShouldInterceptResult {
     match (bind, forward) {
         (Some(bind), true) => ShouldInterceptResult::ForwardAndHandle(bind),
-        (Some(bind), false) => ShouldInterceptResult::InterceptAndHandle(bind),
+        (Some(bind), false) => {
+            if bind.forward {
+                ShouldInterceptResult::ForwardAndHandle(bind)
+            } else {
+                ShouldInterceptResult::InterceptAndHandle(bind)
+            }
+        }
         (None, true) => ShouldInterceptResult::Forward,
         (None, false) => ShouldInterceptResult::InterceptOnly,
     }
@@ -5146,9 +5189,14 @@ fn should_intercept_key<'a>(
                 }
                 if bind.has_press() {
                     suppressed_keys.insert(key_code);
-                    // A bind with a press action takes the key press. Applications will still learn
-                    // about the modifier state via `advertise_modifier_state()`.
-                    ShouldInterceptResult::InterceptAndHandle(bind)
+                    if bind.forward {
+                        ShouldInterceptResult::ForwardAndHandle(bind)
+                    } else {
+                        // A bind with a press action takes the key press. Applications will still
+                        // learn about the modifier state via
+                        // `advertise_modifier_state()`.
+                        ShouldInterceptResult::InterceptAndHandle(bind)
+                    }
                 } else {
                     // This is to ensure that, if you have a modifier-triggered release bind like
                     // Ctrl+Alt, We still forward the Ctrl and Alt presses to the application
@@ -5161,12 +5209,20 @@ fn should_intercept_key<'a>(
                 }
                 suppressed_keys.insert(key_code);
                 if bind.has_press() {
-                    ShouldInterceptResult::InterceptAndHandle(bind)
+                    if bind.forward {
+                        ShouldInterceptResult::ForwardAndHandle(bind)
+                    } else {
+                        ShouldInterceptResult::InterceptAndHandle(bind)
+                    }
                 } else {
-                    // Release-only bind: intercept the key press so that it doesn't reach the
-                    // client, and remember to trigger the release action when the key is
-                    // released.
-                    ShouldInterceptResult::InterceptOnly
+                    if bind.forward {
+                        ShouldInterceptResult::Forward
+                    } else {
+                        // Release-only bind: intercept the key press so that it doesn't reach the
+                        // client, and remember to trigger the release action when the key is
+                        // released.
+                        ShouldInterceptResult::InterceptOnly
+                    }
                 }
             }
         }
@@ -5216,6 +5272,7 @@ fn find_bind<'a, I: Iterator<Item = &'a Bind> + Clone>(
             // It also makes no sense to inhibit the default power key handling.
             // Hardcoded binds must never be inhibited.
             allow_inhibiting: false,
+            forward: false,
             hotkey_overlay_title: None,
         });
     }
@@ -5587,6 +5644,7 @@ fn hardcoded_overview_bind(key: Keysym, mods: Modifiers) -> Option<Bind> {
         cooldown: None,
         allow_when_locked: false,
         allow_inhibiting: false,
+        forward: false,
         hotkey_overlay_title: None,
     })
 }
@@ -5992,6 +6050,7 @@ fn make_binds_iter<'a>(
     config: &'a Config,
     screenshot_ui: &'a ScreenshotUi,
     mru: &'a mut WindowMruUi,
+    #[cfg(feature = "dbus")] global_shortcuts: &'a GlobalShortcuts,
     mods: Modifiers,
 ) -> impl Iterator<Item = &'a Bind> + Clone {
     let general_binds = config.binds.0.iter();
@@ -6010,11 +6069,16 @@ fn make_binds_iter<'a>(
     // Screenshot UI binds already disable themselves when it's closed.
     let screenshot_binds = screenshot_ui.binds();
 
-    // The precedence is screenshot UI, then general, then MRU binds.
-    screenshot_binds
+    // The precedence is screenshot UI, then general, then MRU binds, then global shortcuts.
+    let all_binds = screenshot_binds
         .chain(general_binds)
         .chain(mru_binds)
-        .chain(mru_open_binds)
+        .chain(mru_open_binds);
+
+    #[cfg(feature = "dbus")]
+    let all_binds = all_binds.chain(global_shortcuts.binds());
+
+    all_binds
 }
 
 #[cfg(test)]
@@ -6054,6 +6118,7 @@ mod tests {
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: true,
+            forward: false,
             hotkey_overlay_title: None,
         }
     }

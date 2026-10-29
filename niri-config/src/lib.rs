@@ -2459,6 +2459,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        forward: false,
                         hotkey_overlay_title: Some(
                             Some(
                                 "Inhibit",
@@ -2481,6 +2482,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2503,6 +2505,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: true,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2521,6 +2524,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: Some(
                             None,
                         ),
@@ -2541,6 +2545,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2561,6 +2566,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2579,6 +2585,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2599,6 +2606,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2619,6 +2627,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2637,6 +2646,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2659,6 +2669,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2681,6 +2692,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2701,6 +2713,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: false,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2719,6 +2732,7 @@ mod tests {
                         ),
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2739,6 +2753,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: true,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2755,6 +2770,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2771,6 +2787,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                 ],
@@ -2899,6 +2916,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2923,6 +2941,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                     Bind {
@@ -2949,6 +2968,7 @@ mod tests {
                         cooldown: None,
                         allow_when_locked: false,
                         allow_inhibiting: true,
+                        forward: false,
                         hotkey_overlay_title: None,
                     },
                 ],
