@@ -772,3 +772,130 @@ fn window_peek_melts_the_others() {
         panic!("all columns in view; the test needs one out of it");
     }
 }
+
+// the Snap Layouts' parts: thirds across, halves one above the other, the halves and quarters
+// as before; together they fill the area without a gap
+#[test]
+fn snap_zones_divide_the_area() {
+    use smithay::utils::{Rectangle, Size};
+
+    use crate::stacking::Snap::{self, *};
+    let area = Rectangle::new(Point::from((0., 30.)), Size::from((1921., 1051.)));
+    let r = |s: Snap| {
+        let r = s.rect(area, 0.);
+        (r.loc.x, r.loc.y, r.size.w, r.size.h)
+    };
+    assert_eq!(r(LeftThird), (0., 30., 640., 1051.));
+    assert_eq!(r(MiddleThird), (640., 30., 641., 1051.));
+    assert_eq!(r(RightThird), (1281., 30., 640., 1051.));
+    assert_eq!(r(LeftTwoThirds), (0., 30., 1281., 1051.));
+    assert_eq!(r(RightTwoThirds), (640., 30., 1281., 1051.));
+    assert_eq!(r(Top), (0., 30., 1921., 526.));
+    assert_eq!(r(Bottom), (0., 556., 1921., 525.));
+    assert_eq!(r(Left), (0., 30., 961., 1051.));
+    assert_eq!(r(Right), (961., 30., 960., 1051.));
+    assert_eq!(r(BottomRight), (961., 556., 960., 525.));
+    assert_eq!(r(Maximized), (0., 30., 1921., 1051.));
+}
+
+// snap-window: a window snaps to a part and is told to the shell (WindowSnapped) once, with
+// the room the parts divide; back to its own place is told too
+#[test]
+fn snap_window_is_told_to_the_shell() {
+    use crate::stacking::Snap;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 400, 300);
+    set_stacking(&mut f, id, true);
+    f.niri_complete_animations();
+    f.niri().layout.snapped.clear();
+
+    f.niri().layout.set_floating_snap(&a, Some(Snap::LeftThird));
+    f.niri().layout.refresh(true);
+    let told = std::mem::take(&mut f.niri().layout.snapped);
+    assert_eq!(told.len(), 1, "{told:?}");
+    let (win, _, snap, area) = &told[0];
+    assert_eq!(*win, a);
+    assert_eq!(*snap, Some(Snap::LeftThird));
+    assert_eq!(area.size.w, 1920.);
+    assert_eq!(
+        f.niri().layout.floating_snap(&a),
+        Some(Some(Snap::LeftThird))
+    );
+
+    // the same part again: nothing new to tell
+    f.niri().layout.set_floating_snap(&a, Some(Snap::LeftThird));
+    f.niri().layout.refresh(true);
+    assert!(f.niri().layout.snapped.is_empty());
+
+    f.niri().layout.set_floating_snap(&a, None);
+    f.niri().layout.refresh(true);
+    let told = std::mem::take(&mut f.niri().layout.snapped);
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0].2, None);
+    set_stacking(&mut f, id, false);
+}
+
+// dragged near the top: the shell hears where the pointer is (its snap bar), that it went away,
+// and where it was let go; a drag that never came near the top tells nothing
+#[test]
+fn drag_near_the_top_is_told_to_the_shell() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 400, 300);
+    set_stacking(&mut f, id, true);
+    f.niri_complete_animations();
+    let output = f.niri().layout.outputs().next().unwrap().clone();
+
+    let layout = &mut f.niri().layout;
+    layout.interactive_move_begin(a.clone(), &output, Point::from((960., 540.)));
+    layout.interactive_move_update(
+        &a,
+        Point::from((0., -200.)),
+        output.clone(),
+        (960., 340.).into(),
+    );
+    assert!(layout.drag_top_news.is_none(), "far from the top");
+    layout.interactive_move_update(
+        &a,
+        Point::from((0., -300.)),
+        output.clone(),
+        (960., 40.).into(),
+    );
+    assert_eq!(layout.drag_top_news.take(), Some(false));
+    let (win, _, pos) = layout.drag_top.clone().unwrap();
+    assert_eq!(win, a);
+    assert_eq!(pos, Some(Point::from((960., 40.))));
+    // a pixel: not news
+    layout.interactive_move_update(
+        &a,
+        Point::from((1., 0.)),
+        output.clone(),
+        (961., 40.).into(),
+    );
+    assert!(layout.drag_top_news.is_none());
+    // away and back
+    layout.interactive_move_update(
+        &a,
+        Point::from((0., 200.)),
+        output.clone(),
+        (961., 240.).into(),
+    );
+    assert_eq!(layout.drag_top_news.take(), Some(false));
+    assert_eq!(layout.drag_top.as_ref().unwrap().2, None);
+    layout.interactive_move_update(
+        &a,
+        Point::from((0., -220.)),
+        output.clone(),
+        (961., 20.).into(),
+    );
+    assert_eq!(layout.drag_top_news.take(), Some(false));
+    layout.interactive_move_end(&a);
+    assert_eq!(layout.drag_top_news, Some(true));
+    f.niri().refresh_layout();
+    assert!(f.niri().layout.drag_top.is_none());
+    set_stacking(&mut f, id, false);
+}

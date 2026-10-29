@@ -821,6 +821,24 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Snap a floating window to a part of its output's working area, or back (angel-niri).
+    ///
+    /// As Windows' Snap Layouts: the window fills that part, raised and focused; without a zone
+    /// it gets its own size and place back. Told in [`Event::WindowSnapped`].
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Snap a floating window to a part of the screen")
+    )]
+    SnapWindow {
+        /// Id of the window; the focused one if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        id: Option<u64>,
+        /// Where; none: its own size and place again.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        zone: Option<SnapZone>,
+    },
     /// Peek at a window: the others on its output melt into a sparse dither (angel-niri).
     ///
     /// As Aero Peek on Windows' taskbar: the window alone is seen where it stands, while it is on
@@ -1840,6 +1858,42 @@ pub struct LogicalOutput {
     pub transform: Transform,
 }
 
+/// A part of an output's working area a floating window can fill while stacking (angel-niri).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum SnapZone {
+    /// The whole working area.
+    Maximized,
+    /// The left half.
+    Left,
+    /// The right half.
+    Right,
+    /// The top left quarter.
+    TopLeft,
+    /// The top right quarter.
+    TopRight,
+    /// The bottom left quarter.
+    BottomLeft,
+    /// The bottom right quarter.
+    BottomRight,
+    /// The top half.
+    Top,
+    /// The bottom half.
+    Bottom,
+    /// The left third.
+    LeftThird,
+    /// The middle third.
+    MiddleThird,
+    /// The right third.
+    RightThird,
+    /// The left two thirds.
+    LeftTwoThirds,
+    /// The right two thirds.
+    RightTwoThirds,
+}
+
 /// Output transform, which goes counter-clockwise.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -2317,6 +2371,35 @@ pub enum Event {
         /// screen, maximize, halves, another monitor).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         green: bool,
+    },
+    /// A floating window snapped to a part of its output's working area while stacking, or left
+    /// it (angel-niri): the shell may offer to fill the rest (Snap Assist).
+    WindowSnapped {
+        /// Id of the window.
+        id: u64,
+        /// Output it is on.
+        output: String,
+        /// Where it snapped; none: it left its part.
+        #[serde(default)]
+        zone: Option<SnapZone>,
+        /// The room the parts divide, x, y, width, height in the output's logical pixels (the
+        /// working area below what is kept at the top for this window).
+        area: [f64; 4],
+    },
+    /// A floating window dragged while stacking is near the top of an output, or not any more,
+    /// or was let go there (angel-niri): the shell shows its snap bar, the Snap Layouts as in
+    /// Windows 11, and snaps the window to the part it was let go on.
+    WindowDraggedNearTop {
+        /// Id of the window.
+        id: u64,
+        /// Output the pointer is on.
+        output: String,
+        /// Where the pointer is on that output, in logical pixels; none: away from the top.
+        #[serde(default)]
+        pos: Option<[f64; 2]>,
+        /// Let go here.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dropped: bool,
     },
     /// A toplevel window was closed.
     WindowClosed {

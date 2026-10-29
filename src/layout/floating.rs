@@ -73,6 +73,10 @@ pub struct FloatingSpace<W: LayoutElement> {
 
     /// angel-niri (stacking.rs): the output it is on, for the room under the shell's notch.
     output_name: Option<String>,
+
+    /// angel-niri (stacking.rs): windows that snapped or left their part since last asked, with
+    /// the room the parts divide for each (`take_snapped`, the shell's Snap Assist).
+    snapped: Vec<(W::Id, Option<Snap>, Rectangle<f64, Logical>)>,
 }
 
 /// angel-niri (stacking.rs): the part of `area` a tile snapped to `snap` fills, below the room it
@@ -250,6 +254,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             clock,
             options,
             output_name: None,
+            snapped: Vec::new(),
         }
     }
 
@@ -616,6 +621,27 @@ impl<W: LayoutElement> FloatingSpace<W> {
         request_tile_size(&mut self.tiles[idx], rect.size, animate);
         self.move_to(idx, rect.loc, animate);
         self.data[idx].snap = snap;
+        if data.snap != snap {
+            self.note_snap(idx, snap);
+        }
+    }
+
+    /// angel-niri (stacking.rs): tells the snap (or its end) of the window at `idx`, with the room
+    /// below what its title keeps at the top.
+    fn note_snap(&mut self, idx: usize, snap: Option<Snap>) {
+        let area = self.working_area;
+        let room = Snap::Maximized.rect(area, 0.);
+        let output = self.output_name.as_deref();
+        let tile = &self.tiles[idx];
+        let room = crate::stacking::top_room(output, self.view_size.w, tile.is_titled(), room);
+        let id = tile.window().id().clone();
+        self.snapped
+            .push((id, snap, Snap::Maximized.rect(area, room)));
+    }
+
+    /// angel-niri (stacking.rs): the windows that snapped or left their part since last asked.
+    pub fn take_snapped(&mut self) -> Vec<(W::Id, Option<Snap>, Rectangle<f64, Logical>)> {
+        std::mem::take(&mut self.snapped)
     }
 
     /// angel-niri (stacking.rs): a window let go with its top above the working area (under the
@@ -648,6 +674,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
     /// old size (it is being resized by hand); returns the size it had before it snapped.
     pub fn forget_snap(&mut self, id: &W::Id) -> Option<Size<f64, Logical>> {
         let idx = self.idx_of(id)?;
+        if self.data[idx].snap.is_some() {
+            self.note_snap(idx, None);
+        }
         let data = &mut self.data[idx];
         data.snap = None;
         data.unsnapped.take().map(|rect| rect.size)

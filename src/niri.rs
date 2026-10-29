@@ -4474,6 +4474,46 @@ impl Niri {
         };
 
         self.layout.refresh(layout_is_active);
+
+        // angel-niri (stacking.rs): the shell's snap bar follows a window dragged near the top
+        if let Some(dropped) = self.layout.drag_top_news.take() {
+            let at = self.layout.drag_top.clone();
+            // told once let go, or once away from the top
+            if dropped || at.as_ref().is_some_and(|(_, _, pos)| pos.is_none()) {
+                self.layout.drag_top = None;
+            }
+            if let (Some((window, output, pos)), Some(server)) = (at, &self.ipc_server) {
+                let id = (self.layout.windows())
+                    .find(|(_, m)| m.window == window)
+                    .map(|(_, m)| m.id().get());
+                if let Some(id) = id {
+                    server.send_transient_event(niri_ipc::Event::WindowDraggedNearTop {
+                        id,
+                        output,
+                        pos: pos.map(|p| [p.x, p.y]),
+                        dropped,
+                    });
+                }
+            }
+        }
+
+        // angel-niri (stacking.rs): the shell's Snap Assist hears of every snap
+        let snapped = std::mem::take(&mut self.layout.snapped);
+        if let Some(server) = &self.ipc_server {
+            for (window, output, snap, area) in snapped {
+                let id = (self.layout.windows())
+                    .find(|(_, m)| m.window == window)
+                    .map(|(_, m)| m.id().get());
+                if let Some(id) = id {
+                    server.send_transient_event(niri_ipc::Event::WindowSnapped {
+                        id,
+                        output,
+                        zone: snap.map(Into::into),
+                        area: [area.loc.x, area.loc.y, area.size.w, area.size.h],
+                    });
+                }
+            }
+        }
     }
 
     pub fn refresh_idle_inhibit(&mut self) {

@@ -80,34 +80,90 @@ pub enum Snap {
     TopRight,
     BottomLeft,
     BottomRight,
+    /// Halves one above the other, for a monitor standing upright (the Snap Layouts).
+    Top,
+    Bottom,
+    /// Thirds across, for a wide monitor (the Snap Layouts).
+    LeftThird,
+    MiddleThird,
+    RightThird,
+    LeftTwoThirds,
+    RightTwoThirds,
 }
 
 impl Snap {
     /// The part of `area` it fills, below `inset` kept at the top (`top_room()`).
     pub fn rect(self, mut area: Rectangle<f64, Logical>, inset: f64) -> Rectangle<f64, Logical> {
+        use Snap::*;
         let inset = inset.min(area.size.h / 2.);
         area.loc.y += inset;
         area.size.h -= inset;
-        let mut rect = area;
-        let (half_w, half_h) = ((area.size.w / 2.).round(), (area.size.h / 2.).round());
-        if !matches!(self, Snap::Maximized) {
-            rect.size.w = half_w;
+        let (w, h) = (area.size.w, area.size.h);
+        let (half, third, two) = ((w / 2.).round(), (w / 3.).round(), (w * 2. / 3.).round());
+        let (x0, x1) = match self {
+            Left | TopLeft | BottomLeft => (0., half),
+            Right | TopRight | BottomRight => (half, w),
+            LeftThird => (0., third),
+            MiddleThird => (third, two),
+            RightThird => (two, w),
+            LeftTwoThirds => (0., two),
+            RightTwoThirds => (third, w),
+            Maximized | Top | Bottom => (0., w),
+        };
+        let half_h = (h / 2.).round();
+        let (y0, y1) = match self {
+            Top | TopLeft | TopRight => (0., half_h),
+            Bottom | BottomLeft | BottomRight => (half_h, h),
+            _ => (0., h),
+        };
+        Rectangle::new(
+            area.loc + Point::from((x0, y0)),
+            Size::from((x1 - x0, y1 - y0)),
+        )
+    }
+}
+
+impl From<niri_ipc::SnapZone> for Snap {
+    fn from(zone: niri_ipc::SnapZone) -> Self {
+        use niri_ipc::SnapZone as Z;
+        match zone {
+            Z::Maximized => Snap::Maximized,
+            Z::Left => Snap::Left,
+            Z::Right => Snap::Right,
+            Z::TopLeft => Snap::TopLeft,
+            Z::TopRight => Snap::TopRight,
+            Z::BottomLeft => Snap::BottomLeft,
+            Z::BottomRight => Snap::BottomRight,
+            Z::Top => Snap::Top,
+            Z::Bottom => Snap::Bottom,
+            Z::LeftThird => Snap::LeftThird,
+            Z::MiddleThird => Snap::MiddleThird,
+            Z::RightThird => Snap::RightThird,
+            Z::LeftTwoThirds => Snap::LeftTwoThirds,
+            Z::RightTwoThirds => Snap::RightTwoThirds,
         }
-        if matches!(self, Snap::Right | Snap::TopRight | Snap::BottomRight) {
-            rect.loc.x += half_w;
-            rect.size.w = area.size.w - half_w;
+    }
+}
+
+impl From<Snap> for niri_ipc::SnapZone {
+    fn from(snap: Snap) -> Self {
+        use niri_ipc::SnapZone as Z;
+        match snap {
+            Snap::Maximized => Z::Maximized,
+            Snap::Left => Z::Left,
+            Snap::Right => Z::Right,
+            Snap::TopLeft => Z::TopLeft,
+            Snap::TopRight => Z::TopRight,
+            Snap::BottomLeft => Z::BottomLeft,
+            Snap::BottomRight => Z::BottomRight,
+            Snap::Top => Z::Top,
+            Snap::Bottom => Z::Bottom,
+            Snap::LeftThird => Z::LeftThird,
+            Snap::MiddleThird => Z::MiddleThird,
+            Snap::RightThird => Z::RightThird,
+            Snap::LeftTwoThirds => Z::LeftTwoThirds,
+            Snap::RightTwoThirds => Z::RightTwoThirds,
         }
-        if matches!(
-            self,
-            Snap::TopLeft | Snap::TopRight | Snap::BottomLeft | Snap::BottomRight
-        ) {
-            rect.size.h = half_h;
-        }
-        if matches!(self, Snap::BottomLeft | Snap::BottomRight) {
-            rect.loc.y += half_h;
-            rect.size.h = area.size.h - half_h;
-        }
-        rect
     }
 }
 
@@ -126,12 +182,15 @@ pub enum Arrow {
 pub fn arrow(snap: Option<Snap>, arrow: Arrow) -> Option<Option<Snap>> {
     use Snap::*;
     let to = match (arrow, snap) {
-        (Arrow::Left, Some(Right | TopRight | BottomRight)) => None,
-        (Arrow::Left, Some(Left | TopLeft | BottomLeft)) => snap,
+        (Arrow::Left, Some(Right | TopRight | BottomRight | RightThird | RightTwoThirds)) => None,
+        (Arrow::Left, Some(Left | TopLeft | BottomLeft | LeftThird | LeftTwoThirds)) => snap,
         (Arrow::Left, _) => Some(Left),
-        (Arrow::Right, Some(Left | TopLeft | BottomLeft)) => None,
-        (Arrow::Right, Some(Right | TopRight | BottomRight)) => snap,
+        (Arrow::Right, Some(Left | TopLeft | BottomLeft | LeftThird | LeftTwoThirds)) => None,
+        (Arrow::Right, Some(Right | TopRight | BottomRight | RightThird | RightTwoThirds)) => snap,
         (Arrow::Right, _) => Some(Right),
+        (Arrow::Up, Some(Top)) => Some(Maximized),
+        (Arrow::Up, Some(Bottom)) => None,
+        (Arrow::Down, Some(Top)) => None,
         (Arrow::Up, Some(Left)) => Some(TopLeft),
         (Arrow::Up, Some(Right)) => Some(TopRight),
         (Arrow::Up, Some(BottomLeft)) => Some(Left),
@@ -148,6 +207,10 @@ pub fn arrow(snap: Option<Snap>, arrow: Arrow) -> Option<Option<Snap>> {
     };
     Some(to)
 }
+
+/// How near the top of its output a dragged window's pointer is in the shell's snap bar (the Snap
+/// Layouts as in Windows 11: `Event::WindowDraggedNearTop`).
+pub const SNAP_BAR: f64 = 80.;
 
 /// How near an edge of its output the pointer snaps a dragged window there.
 const SNAP_EDGE: f64 = 8.;

@@ -2321,6 +2321,11 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.refresh_sizes();
     }
 
+    /// angel-niri (stacking.rs): the windows that snapped or left their part since last asked.
+    pub fn take_snapped(&mut self) -> Vec<(W::Id, Option<Snap>, Rectangle<f64, Logical>)> {
+        self.floating.take_snapped()
+    }
+
     /// angel-niri (stacking.rs): snaps a floating window to a part of the working area, or back.
     pub fn set_floating_snap(&mut self, id: &W::Id, snap: Option<Snap>) {
         self.floating.set_snap(id, snap, true);

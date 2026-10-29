@@ -492,6 +492,23 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
                         let what = if green { "size menu" } else { "menu" };
                         println!("Window {what} requested: id {id}, on {output} at {pos:?}");
                     }
+                    Event::WindowSnapped {
+                        id,
+                        output,
+                        zone,
+                        area,
+                    } => {
+                        println!("Window snapped: id {id}, on {output} to {zone:?} of {area:?}");
+                    }
+                    Event::WindowDraggedNearTop {
+                        id,
+                        output,
+                        pos,
+                        dropped,
+                    } => {
+                        let what = if dropped { "let go" } else { "dragged" };
+                        println!("Window {what} near the top: id {id}, on {output} at {pos:?}");
+                    }
                     Event::WindowClosed { id } => {
                         println!("Window closed: {id}");
                     }

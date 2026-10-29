@@ -509,6 +509,19 @@ pub struct Layout<W: LayoutElement> {
     fullscreen_from: Vec<(W::Id, WorkspaceId)>,
     /// angel-niri (window_peek.rs): the window peeked at, the others on its output melted away.
     window_peek: Option<W::Id>,
+    /// angel-niri (stacking.rs): windows that snapped or left their part, the output each is on
+    /// and the room the parts divide there, for the shell (`Event::WindowSnapped`).
+    pub snapped: Vec<(
+        W::Id,
+        String,
+        Option<crate::stacking::Snap>,
+        Rectangle<f64, Logical>,
+    )>,
+    /// angel-niri (stacking.rs): a floating window dragged near the top of an output (the
+    /// shell's snap bar): the pointer there, none once away from it again; and whether that
+    /// changed (false) or it was let go there (true) since last told.
+    pub drag_top: Option<(W::Id, String, Option<Point<f64, Logical>>)>,
+    pub drag_top_news: Option<bool>,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -906,6 +919,9 @@ impl<W: LayoutElement> Layout<W> {
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
             window_peek: None,
+            snapped: Vec::new(),
+            drag_top: None,
+            drag_top_news: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
@@ -940,6 +956,9 @@ impl<W: LayoutElement> Layout<W> {
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
             window_peek: None,
+            snapped: Vec::new(),
+            drag_top: None,
+            drag_top_news: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
@@ -4543,6 +4562,25 @@ impl<W: LayoutElement> Layout<W> {
                     self.shaken = Some((window.clone(), others));
                 }
 
+                // angel-niri (stacking.rs): near the top, the shell shows its snap bar.
+                let near_top = (crate::stacking::on()
+                    && move_.is_floating
+                    && !self.overview_open
+                    && pointer_pos_within_output.y < crate::stacking::SNAP_BAR)
+                    .then_some(pointer_pos_within_output);
+                let output = move_.output.name();
+                let moved = match (&self.drag_top, near_top) {
+                    (Some((_, o0, Some(p0))), Some(p1)) => {
+                        *o0 != output || (p0.x - p1.x).abs() >= 2. || (p0.y - p1.y).abs() >= 2.
+                    }
+                    (Some((_, _, Some(_))), None) | (Some((_, _, None)) | None, Some(_)) => true,
+                    _ => false,
+                };
+                if moved {
+                    self.drag_top = Some((window.clone(), output, near_top));
+                    self.drag_top_news.get_or_insert(false);
+                }
+
                 // angel-niri (stacking.rs): a floating window dragged to an edge snaps there.
                 move_.snap = (crate::stacking::on() && move_.is_floating && !self.overview_open)
                     .then(|| {
@@ -4613,6 +4651,13 @@ impl<W: LayoutElement> Layout<W> {
         let Some(InteractiveMoveState::Moving(mut move_)) = self.interactive_move.take() else {
             unreachable!()
         };
+
+        // angel-niri (stacking.rs): let go near the top: the shell's snap bar may take it
+        match &self.drag_top {
+            Some((_, _, Some(_))) => self.drag_top_news = Some(true),
+            Some(_) if self.drag_top_news.is_none() => self.drag_top = None,
+            _ => (),
+        }
 
         for mon in self.monitors_mut() {
             mon.dnd_scroll_gesture_end();
@@ -5348,6 +5393,17 @@ impl<W: LayoutElement> Layout<W> {
         // angel-niri (window_peek.rs): the ghosts follow the peeked window in front or not
         if self.window_peek.is_some() {
             self.refresh_window_peek();
+        }
+        // angel-niri (stacking.rs): the snaps since last time, for the shell
+        if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+            for mon in monitors.iter_mut() {
+                let output = mon.output_name().clone();
+                for ws in &mut mon.workspaces {
+                    for (id, snap, area) in ws.take_snapped() {
+                        self.snapped.push((id, output.clone(), snap, area));
+                    }
+                }
+            }
         }
         let _span = tracy_client::span!("Layout::refresh");
 

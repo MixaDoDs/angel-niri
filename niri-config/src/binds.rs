@@ -323,6 +323,8 @@ pub enum Action {
     #[knuffel(skip)]
     PeekWindow(Option<u64>),
     #[knuffel(skip)]
+    SnapWindow(Option<u64>, Option<niri_ipc::SnapZone>),
+    #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
     SetPixelOverview(f64, String),
@@ -726,6 +728,7 @@ impl From<niri_ipc::Action> for Action {
             }
             niri_ipc::Action::ShowDesktop { output } => Self::ShowDesktop(output),
             niri_ipc::Action::PeekWindow { id } => Self::PeekWindow(id),
+            niri_ipc::Action::SnapWindow { id, zone } => Self::SnapWindow(id, zone),
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }
