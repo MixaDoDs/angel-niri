@@ -520,10 +520,77 @@ impl State {
             event.key_code(),
             event.state(),
             |this, mods, keysym| {
-                let key_code = event.key_code();
-                let modified = keysym.modified_sym();
-                let raw = keysym.raw_latin_sym_or_raw_current_sym();
+                let key_code = keysym.raw_code();
                 let modifiers = modifiers_from_state(*mods);
+
+                // When resolving a bind, we can try three keysyms:
+                // - modified: the actual final keysym we got by pressing this key
+                // - raw: keysym from the 0th layer of the current layout (usually lowercase letter)
+                // - raw_ascii: keysym from the same key on an ASCII layout
+                // (if raw isn't ASCII itself)
+                let (modified, raw, raw_ascii) = {
+                    let xkb = keysym.xkb();
+                    let xkb = xkb.lock().unwrap();
+
+                    // SAFETY: xkb_state does not outlive xkb.
+                    let (modified, layout) = unsafe {
+                        let xkb_state = xkb.state();
+                        (
+                            xkb_state.key_get_one_sym(key_code),
+                            Layout(xkb_state.key_get_layout(key_code)),
+                        )
+                    };
+                    let modified = (modified != Keysym::NoSymbol).then_some(modified);
+
+                    let raw_sym = |layout| {
+                        let raw_syms = xkb.raw_syms_for_key_in_layout(key_code, layout);
+
+                        // Match the xkb_key_get_one_sym() logic.
+                        if raw_syms.len() == 1 {
+                            Some(raw_syms[0])
+                        } else {
+                            None
+                        }
+                    };
+
+                    let raw = raw_sym(layout);
+
+                    // We include numbers and symbols too to have more binds working on us,ru and
+                    // avoid some surprising behavior.
+                    let is_ascii = |keysym: Keysym| {
+                        keysym.key_char().is_some_and(|key| key.is_ascii_graphic())
+                    };
+
+                    let mut raw_ascii = None;
+
+                    // Only check if raw is ASCII and not modified, so that e.g. pressing Shift
+                    // does not change the fallback behavior on layouts where raw isn't ASCII but
+                    // the shifted key is.
+                    if !raw.is_some_and(is_ascii) {
+                        // Haven't seen a latin keysym yet; try to find.
+                        for layout in xkb.layouts().filter(|l| *l != layout) {
+                            if let Some(raw) = raw_sym(layout) {
+                                if is_ascii(raw) {
+                                    raw_ascii = Some(raw);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    (modified, raw, raw_ascii)
+                };
+
+                // Avoid unnecessary lookups if raw is the same as modified.
+                let raw = raw.filter(|k| Some(*k) != modified);
+
+                // We don't differentiate between raw and raw_ascii when it comes to bind handling.
+                let raw = match (raw, raw_ascii) {
+                    (None, None) => &[][..],
+                    (None, Some(b)) => &[b][..],
+                    (Some(a), None) => &[a][..],
+                    (Some(a), Some(b)) => &[a, b][..],
+                };
 
                 // After updating XKB state from accessibility-grabbed keys, return right away and
                 // don't handle them.
@@ -552,14 +619,16 @@ impl State {
 
                         let forward = matches!(
                             modified,
-                            Keysym::Shift_L
-                                | Keysym::Shift_R
-                                | Keysym::Control_L
-                                | Keysym::Control_R
-                                | Keysym::Super_L
-                                | Keysym::Super_R
-                                | Keysym::Alt_L
-                                | Keysym::Alt_R
+                            Some(
+                                Keysym::Shift_L
+                                    | Keysym::Shift_R
+                                    | Keysym::Control_L
+                                    | Keysym::Control_R
+                                    | Keysym::Super_L
+                                    | Keysym::Super_R
+                                    | Keysym::Alt_L
+                                    | Keysym::Alt_R
+                            )
                         );
                         return bind_intercept_result(bind, forward);
                     }
@@ -568,7 +637,7 @@ impl State {
                 }
 
                 if this.niri.exit_confirm_dialog.is_open() && pressed {
-                    if raw == Some(Keysym::Return) {
+                    if modified == Some(Keysym::Return) {
                         info!("quitting after confirming exit dialog");
                         this.niri.stop_signal.stop();
                     }
@@ -592,7 +661,7 @@ impl State {
                     );
                 }
 
-                if pressed && raw == Some(Keysym::Escape) {
+                if pressed && modified == Some(Keysym::Escape) {
                     // Cancel certain grabs on Escape.
                     let pointer = this.niri.seat.get_pointer().unwrap();
                     if pointer
@@ -605,7 +674,7 @@ impl State {
                     }
                 }
 
-                if let Some(Keysym::space) = raw {
+                if modified == Some(Keysym::space) {
                     this.niri.screenshot_ui.set_space_down(pressed);
                 }
 
@@ -634,7 +703,7 @@ impl State {
                         modified,
                         raw,
                         pressed,
-                        *mods,
+                        modifiers,
                         this.niri.config.borrow().input.disable_power_key_handling,
                         is_inhibiting_shortcuts,
                         is_locked,
@@ -645,7 +714,8 @@ impl State {
                 if matches!(res, ShouldInterceptResult::Forward) {
                     // If we didn't find any bind, try other hardcoded keys.
                     if this.niri.keyboard_focus.is_overview() && pressed {
-                        if let Some(bind) = raw.and_then(|raw| hardcoded_overview_bind(raw, *mods))
+                        if let Some(bind) =
+                            modified.and_then(|key| hardcoded_overview_bind(key, modifiers))
                         {
                             this.niri.suppressed_keys.insert(key_code);
                             return ShouldInterceptResult::InterceptAndHandle(bind);
@@ -5034,13 +5104,13 @@ fn should_intercept_key<'a>(
     suppressed_keys: &mut HashSet<Keycode>,
     pending_release_binds: &mut HashMap<Keycode, Bind>,
     cooldown_timers: &HashMap<Key, RegistrationToken>,
-    bindings: impl IntoIterator<Item = &'a Bind>,
+    bindings: impl Iterator<Item = &'a Bind> + Clone,
     mod_key: ModKey,
     key_code: Keycode,
-    modified: Keysym,
-    raw: Option<Keysym>,
+    modified: Option<Keysym>,
+    raw: &[Keysym],
     pressed: bool,
-    mods: ModifiersState,
+    mods: Modifiers,
     disable_power_key_handling: bool,
     is_inhibiting_shortcuts: bool,
     is_locked: bool,
@@ -5070,7 +5140,7 @@ fn should_intercept_key<'a>(
                 // or forward the press.
                 suppressed_keys.insert(key_code);
                 ShouldInterceptResult::InterceptOnly
-            } else if is_keysym_modifier(modified) {
+            } else if modified.is_some_and(is_keysym_modifier) {
                 if should_record_release_bind(&bind, is_locked, is_in_screenshot, cooldown_timers) {
                     pending_release_binds.insert(key_code, bind.clone());
                 }
@@ -5104,19 +5174,21 @@ fn should_intercept_key<'a>(
     }
 }
 
-fn find_bind<'a>(
-    bindings: impl IntoIterator<Item = &'a Bind>,
+fn find_bind<'a, I: Iterator<Item = &'a Bind> + Clone>(
+    bindings: I,
     mod_key: ModKey,
-    modified: Keysym,
-    raw: Option<Keysym>,
-    mods: ModifiersState,
+    modified: Option<Keysym>,
+    raw: &[Keysym],
+    mods: Modifiers,
     disable_power_key_handling: bool,
 ) -> Option<Bind> {
+    let _span = tracy_client::span!("find_bind");
+
     use keysyms::*;
 
     // Handle hardcoded binds.
     #[allow(non_upper_case_globals)] // wat
-    let hardcoded_action = match modified.raw() {
+    let hardcoded_action = match modified.map_or(KEY_NoSymbol, Keysym::raw) {
         modified @ KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12 => {
             let vt = (modified - KEY_XF86Switch_VT_1 + 1) as i32;
             Some(Action::ChangeVt(vt))
@@ -5129,7 +5201,7 @@ fn find_bind<'a>(
         return Some(Bind {
             key: Key {
                 // Not entirely correct but it doesn't matter in how we currently use it.
-                trigger: Trigger::Keysym(modified),
+                trigger: Trigger::Keysym(modified.unwrap()),
                 modifiers: Modifiers::empty(),
             },
             action: BoundAction::Press(action),
@@ -5148,65 +5220,67 @@ fn find_bind<'a>(
         });
     }
 
-    let raw = raw?;
-
-    let modifiers = modifiers_from_state(mods);
-
     // A modifier key can trigger binds bound as the compositor mod key (`Mod`), by its own keysym
     // (like `Alt_L`), or as the modifier itself (like `Alt`). Return the first bind that matches.
-    bindings
-        .into_iter()
-        .find(|bind| {
-            let bind_trigger = bind.key.trigger;
-            // Check that the bind modifiers match the held modifiers.
-            //
-            // Pass the bind's trigger itself since we'll check the trigger match below.
-            // (Note that this means mod_key is not properly checked when it matches the trigger.)
-            if !bind_matches_trigger(bind, bind_trigger, mod_key, modifiers) {
-                return false;
-            }
-
-            // Binds that consist only of generic modifiers can be hit in any order (trigger key
-            // does not have to be the last). This is consistent with how these types of binds work
-            // elsewhere.
-            //
-            // For example:
-            // - Alt + Shift to switch keyboard layout on Windows
-            // - Ctrl + Alt to show inlay hints in VSCode
-            if bind_trigger.is_generic_modifier() {
-                // Bind trigger matching compositor mod isn't properly checked above.
-                // Check it here.
-                if (bind_trigger == Trigger::CompositorMod
-                    || bind_trigger == Trigger::Modifier(mod_key))
-                    && !modifiers.contains(mod_key.to_modifiers())
-                {
+    let find = |mut bindings: I, key: Keysym| {
+        bindings
+            .find(|bind| {
+                let bind_trigger = bind.key.trigger;
+                // Check that the bind modifiers match the held modifiers.
+                //
+                // Pass the bind's trigger itself since we'll check the trigger match below.
+                // (Note that this means mod_key is not properly checked when it matches the
+                // trigger.)
+                if !bind_matches_trigger(bind, bind_trigger, mod_key, mods) {
                     return false;
                 }
 
-                // Check that the key we pressed is one of the bind modifiers.
-                let mut raw_mods = Trigger::Keysym(raw).implied_modifier();
-                if mod_key.matches_keysym(raw) {
-                    raw_mods |= Modifiers::COMPOSITOR;
-                }
-                return !raw_mods.is_empty() && bind.key.modifiers.intersects(raw_mods);
-            }
+                // Binds that consist only of generic modifiers can be hit in any order (trigger key
+                // does not have to be the last). This is consistent with how these types of binds
+                // work elsewhere.
+                //
+                // For example:
+                // - Alt + Shift to switch keyboard layout on Windows
+                // - Ctrl + Alt to show inlay hints in VSCode
+                if bind_trigger.is_generic_modifier() {
+                    // Bind trigger matching compositor mod isn't properly checked above.
+                    // Check it here.
+                    if (bind_trigger == Trigger::CompositorMod
+                        || bind_trigger == Trigger::Modifier(mod_key))
+                        && !mods.contains(mod_key.to_modifiers())
+                    {
+                        return false;
+                    }
 
-            // Modifier-only binds can be written in several ways:
-            // - `Mod { quit; }` - Trigger::CompositorMod
-            // - `Super { quit; }` - Trigger::Modifier(_)
-            // - `Super_L { quit; }` - Trigger::Keysym(_)
-            //
-            // These only matter for keyboard keys and not for mouse or others. So, check them here.
-            trigger_matches_keysym(bind_trigger, raw, mod_key)
-        })
-        .cloned()
+                    // Check that the key we pressed is one of the bind modifiers.
+                    let mut raw_mods = Trigger::Keysym(key).implied_modifier();
+                    if mod_key.matches_keysym(key) {
+                        raw_mods |= Modifiers::COMPOSITOR;
+                    }
+                    return !raw_mods.is_empty() && bind.key.modifiers.intersects(raw_mods);
+                }
+
+                // Modifier-only binds can be written in several ways:
+                // - `Mod { quit; }` - Trigger::CompositorMod
+                // - `Super { quit; }` - Trigger::Modifier(_)
+                // - `Super_L { quit; }` - Trigger::Keysym(_)
+                //
+                // These only matter for keyboard keys and not for mouse or others. So, check them
+                // here.
+                trigger_matches_keysym(bind_trigger, key, mod_key)
+            })
+            .cloned()
+    };
+
+    let mut keys = modified.into_iter().chain(raw.iter().copied());
+    keys.find_map(|key| find(bindings.clone(), key))
 }
 
-fn trigger_matches_keysym(trigger: Trigger, raw: Keysym, mod_key: ModKey) -> bool {
+fn trigger_matches_keysym(trigger: Trigger, key: Keysym, mod_key: ModKey) -> bool {
     match trigger {
-        Trigger::CompositorMod => mod_key.matches_keysym(raw),
-        Trigger::Keysym(keysym) => keysym == raw,
-        Trigger::Modifier(modifier) => modifier.matches_keysym(raw),
+        Trigger::CompositorMod => mod_key.matches_keysym(key),
+        Trigger::Keysym(keysym) => keysym == key,
+        Trigger::Modifier(modifier) => modifier.matches_keysym(key),
         _ => false,
     }
 }
@@ -5483,14 +5557,13 @@ fn bind_allowed_during_screenshot(bind: &Bind, pressed: bool) -> bool {
     }
 }
 
-fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
-    let mods = modifiers_from_state(mods);
+fn hardcoded_overview_bind(key: Keysym, mods: Modifiers) -> Option<Bind> {
     if !mods.is_empty() {
         return None;
     }
 
     let mut repeat = true;
-    let action = match raw {
+    let action = match key {
         Keysym::Escape | Keysym::Return => {
             repeat = false;
             Action::ToggleOverview
@@ -5506,7 +5579,7 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
 
     Some(Bind {
         key: Key {
-            trigger: Trigger::Keysym(raw),
+            trigger: Trigger::Keysym(key),
             modifiers: Modifiers::empty(),
         },
         action: BoundAction::Press(action),
@@ -5920,7 +5993,7 @@ fn make_binds_iter<'a>(
     screenshot_ui: &'a ScreenshotUi,
     mru: &'a mut WindowMruUi,
     mods: Modifiers,
-) -> impl Iterator<Item = &'a Bind> {
+) -> impl Iterator<Item = &'a Bind> + Clone {
     let general_binds = config.binds.0.iter();
 
     // Figure out the binds to use depending on whether the MRU is enabled and/or open.
@@ -5990,18 +6063,11 @@ mod tests {
         bind(Trigger::Keysym(CLOSE_KEYSYM), Modifiers::COMPOSITOR, action)
     }
 
-    fn mod_held() -> ModifiersState {
-        ModifiersState {
-            logo: true,
-            ..Default::default()
-        }
-    }
-
     /// Processes a press of the `Mod+Q` bind that the tests are written with.
     fn press_close_key(
         state: &mut TestState,
         bindings: &Binds,
-        mods: ModifiersState,
+        mods: Modifiers,
     ) -> ShouldInterceptResult {
         process_close_key(state, bindings, mods, KeyState::Pressed)
     }
@@ -6010,7 +6076,7 @@ mod tests {
     fn release_close_key(
         state: &mut TestState,
         bindings: &Binds,
-        mods: ModifiersState,
+        mods: Modifiers,
     ) -> ShouldInterceptResult {
         process_close_key(state, bindings, mods, KeyState::Released)
     }
@@ -6018,7 +6084,7 @@ mod tests {
     fn process_close_key(
         state: &mut TestState,
         bindings: &Binds,
-        mods: ModifiersState,
+        mods: Modifiers,
         key_state: KeyState,
     ) -> ShouldInterceptResult {
         let pressed = key_state == KeyState::Pressed;
@@ -6031,11 +6097,11 @@ mod tests {
             &mut state.suppressed_keys,
             &mut state.pending_release_binds,
             &state.cooldown_timers,
-            &bindings.0,
+            bindings.0.iter(),
             ModKey::Super,
             CLOSE_KEY_CODE,
-            CLOSE_KEYSYM,
             Some(CLOSE_KEYSYM),
+            &[],
             pressed,
             mods,
             state.disable_power_key_handling,
@@ -6311,13 +6377,13 @@ mod tests {
             is_locked: true,
             ..create_test_state()
         };
-        let result = press_close_key(&mut state, &bindings, mod_held());
+        let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
 
         // `handle_bind()` drops the press while locked, and nothing is recorded to undo.
         assert_matches!(result, ShouldInterceptResult::InterceptAndHandle(_));
         assert!(state.pending_release_binds.is_empty());
 
-        let result = release_close_key(&mut state, &bindings, mod_held());
+        let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptOnly);
     }
 
@@ -6331,12 +6397,12 @@ mod tests {
         })]);
 
         let mut state = create_test_state();
-        let result = press_close_key(&mut state, &bindings, mod_held());
+        let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptAndHandle(_));
         assert!(state.pending_release_binds.contains_key(&CLOSE_KEY_CODE));
 
         state.is_locked = true;
-        let result = release_close_key(&mut state, &bindings, mod_held());
+        let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(
             result,
             ShouldInterceptResult::InterceptAndHandle(Bind {
@@ -6355,11 +6421,11 @@ mod tests {
         let bindings = Binds(vec![close_bind(BoundAction::Release(Action::CloseWindow))]);
 
         let mut state = create_test_state();
-        let result = press_close_key(&mut state, &bindings, mod_held());
+        let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptOnly);
         assert!(state.pending_release_binds.contains_key(&CLOSE_KEY_CODE));
 
-        let result = release_close_key(&mut state, &bindings, mod_held());
+        let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(
             result,
             ShouldInterceptResult::InterceptAndHandle(Bind {
@@ -6381,11 +6447,11 @@ mod tests {
             is_locked: true,
             ..create_test_state()
         };
-        let result = press_close_key(&mut state, &bindings, mod_held());
+        let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptOnly);
         assert!(state.pending_release_binds.contains_key(&CLOSE_KEY_CODE));
 
-        let result = release_close_key(&mut state, &bindings, mod_held());
+        let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(
             result,
             ShouldInterceptResult::InterceptAndHandle(Bind {
@@ -6404,11 +6470,11 @@ mod tests {
             is_locked: true,
             ..create_test_state()
         };
-        let result = press_close_key(&mut state, &bindings, mod_held());
+        let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptOnly);
         assert!(state.pending_release_binds.is_empty());
 
-        let result = release_close_key(&mut state, &bindings, mod_held());
+        let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
         assert_matches!(result, ShouldInterceptResult::InterceptOnly);
         assert!(state.pending_release_binds.is_empty());
     }
