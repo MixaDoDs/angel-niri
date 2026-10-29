@@ -77,6 +77,10 @@ pub struct FloatingSpace<W: LayoutElement> {
     /// angel-niri (stacking.rs): windows that snapped or left their part since last asked, with
     /// the room the parts divide for each (`take_snapped`, the shell's Snap Assist).
     snapped: Vec<(W::Id, Option<Snap>, Rectangle<f64, Logical>)>,
+
+    /// angel-niri (stacking.rs): Snap groups — the windows snapped beside the one being resized
+    /// along the edge taken: they give way, each by its own edge on that line, from its size then.
+    resize_partners: Vec<(W::Id, ResizeEdge, Size<f64, Logical>)>,
 }
 
 /// angel-niri (stacking.rs): the part of `area` a tile snapped to `snap` fills, below the room it
@@ -255,6 +259,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             options,
             output_name: None,
             snapped: Vec::new(),
+            resize_partners: Vec::new(),
         }
     }
 
@@ -818,6 +823,24 @@ impl<W: LayoutElement> FloatingSpace<W> {
             return false;
         };
 
+        // angel-niri (stacking.rs): Snap groups — a window snapped to a part comes up with the
+        // others snapped to parts here, in their order, itself on top
+        let in_part = |snap: Option<Snap>| snap.is_some_and(|s| s != Snap::Maximized);
+        if in_part(self.data[idx].snap) {
+            let group: Vec<W::Id> = (zip(&self.tiles, &self.data).rev())
+                .filter(|(tile, data)| in_part(data.snap) && tile.window().id() != id)
+                .map(|(tile, _)| tile.window().id().clone())
+                .collect();
+            for other in group {
+                if let Some(i) = self.idx_of(&other) {
+                    self.raise_window(i, 0);
+                }
+            }
+        }
+        let Some(idx) = self.idx_of(id) else {
+            return false;
+        };
+
         self.raise_window(idx, 0);
         self.active_window_id = Some(id.clone());
         self.bring_up_descendants_of(0);
@@ -1354,7 +1377,12 @@ impl<W: LayoutElement> FloatingSpace<W> {
             return false;
         }
 
-        // angel-niri (stacking.rs): resized by hand, a snapped window keeps its new size.
+        // angel-niri (stacking.rs): resized by hand, a snapped window keeps its new size; the ones
+        // snapped beside it along that edge give way (Snap groups) and keep theirs too.
+        self.resize_partners = self.snap_partners(&window, edges);
+        for (id, _, _) in self.resize_partners.clone() {
+            self.forget_snap(&id);
+        }
         self.forget_snap(&window);
 
         let tile = self
@@ -1390,7 +1418,22 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let original_window_size = resize.original_window_size;
         let edges = resize.data.edges;
+        self.resize_by(window, edges, original_window_size, delta);
+        for (id, edges, size) in self.resize_partners.clone() {
+            self.resize_by(&id, edges, size, delta);
+        }
 
+        true
+    }
+
+    /// The window `window_size` big when the pointer took its `edges`, the pointer `delta` away.
+    fn resize_by(
+        &mut self,
+        window: &W::Id,
+        edges: ResizeEdge,
+        original_window_size: Size<f64, Logical>,
+        delta: Point<f64, Logical>,
+    ) {
         if edges.intersects(ResizeEdge::LEFT_RIGHT) {
             let mut dx = delta.x;
             if edges.contains(ResizeEdge::LEFT) {
@@ -1410,8 +1453,51 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let window_height = (original_window_size.h + dy).round() as i32;
             self.set_window_height(Some(window), SizeChange::SetFixed(window_height), false);
         }
+    }
 
-        true
+    /// angel-niri (stacking.rs): the windows snapped beside the snapped `window` along its `edges`
+    /// (their own edge on that line, within two pixels, and side by side along it), each with the
+    /// edge of its own that gives way and its size now. None if `window` isn't snapped to a part.
+    fn snap_partners(
+        &self,
+        window: &W::Id,
+        edges: ResizeEdge,
+    ) -> Vec<(W::Id, ResizeEdge, Size<f64, Logical>)> {
+        let in_part = |snap: Option<Snap>| snap.is_some_and(|s| s != Snap::Maximized);
+        let Some(idx) = self
+            .idx_of(window)
+            .filter(|idx| in_part(self.data[*idx].snap))
+        else {
+            return Vec::new();
+        };
+        let r = Rectangle::new(self.data[idx].logical_pos, self.data[idx].size);
+        let near = |a: f64, b: f64| (a - b).abs() <= 2.;
+        let mut partners = Vec::new();
+        for (i, (tile, data)) in zip(&self.tiles, &self.data).enumerate() {
+            if i == idx || !in_part(data.snap) {
+                continue;
+            }
+            let p = Rectangle::new(data.logical_pos, data.size);
+            let beside_y = p.loc.y < r.loc.y + r.size.h && r.loc.y < p.loc.y + p.size.h;
+            let beside_x = p.loc.x < r.loc.x + r.size.w && r.loc.x < p.loc.x + p.size.w;
+            let mut own = ResizeEdge::empty();
+            if edges.contains(ResizeEdge::RIGHT) && beside_y && near(p.loc.x, r.loc.x + r.size.w) {
+                own |= ResizeEdge::LEFT;
+            }
+            if edges.contains(ResizeEdge::LEFT) && beside_y && near(p.loc.x + p.size.w, r.loc.x) {
+                own |= ResizeEdge::RIGHT;
+            }
+            if edges.contains(ResizeEdge::BOTTOM) && beside_x && near(p.loc.y, r.loc.y + r.size.h) {
+                own |= ResizeEdge::TOP;
+            }
+            if edges.contains(ResizeEdge::TOP) && beside_x && near(p.loc.y + p.size.h, r.loc.y) {
+                own |= ResizeEdge::BOTTOM;
+            }
+            if !own.is_empty() {
+                partners.push((tile.window().id().clone(), own, tile.window_size()));
+            }
+        }
+        partners
     }
 
     pub fn interactive_resize_end(&mut self, window: Option<&W::Id>) {
@@ -1426,6 +1512,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         self.interactive_resize = None;
+        self.resize_partners.clear();
     }
 
     pub fn refresh(&mut self, is_active: bool, is_focused: bool) {
@@ -1446,7 +1533,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
                 .interactive_resize
                 .as_ref()
                 .filter(|resize| &resize.window == win.id())
-                .map(|resize| resize.data);
+                .map(|resize| resize.data)
+                // angel-niri (stacking.rs): a Snap group's partner gives way by its own edge
+                .or_else(|| {
+                    (self.resize_partners.iter())
+                        .find(|(id, _, _)| id == win.id())
+                        .map(|(_, edges, _)| InteractiveResizeData { edges: *edges })
+                });
             win.set_interactive_resize(resize_data);
 
             let border_config = self.options.layout.border.merged_with(&win.rules().border);

@@ -899,3 +899,84 @@ fn drag_near_the_top_is_told_to_the_shell() {
     assert!(f.niri().layout.drag_top.is_none());
     set_stacking(&mut f, id, false);
 }
+
+// Snap groups: the edge two snapped windows share moves both (the one beside gives way by its
+// own edge); a window of the group brought up brings the others up under it
+#[test]
+fn snap_group_shares_its_edge_and_comes_up_together() {
+    use crate::stacking::Snap;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, sa) = open_surface(&mut f, id, 400, 300);
+    let (b, sb) = open_surface(&mut f, id, 400, 300);
+    let c = open(&mut f, id, 400, 300);
+    set_stacking(&mut f, id, true);
+    f.niri_complete_animations();
+    f.niri().layout.set_floating_snap(&a, Some(Snap::Left));
+    f.niri().layout.set_floating_snap(&b, Some(Snap::Right));
+    f.double_roundtrip(id);
+    for surface in [&sa, &sb] {
+        let window = f.client(id).window(surface);
+        window.set_size(960, 1080);
+        window.ack_last_and_commit();
+    }
+    f.double_roundtrip(id);
+    let ws_sizes = |f: &mut Fixture| -> Vec<(Window, Option<(i32, i32)>)> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.floating()
+            .tiles()
+            .map(|t| {
+                let s = t.window().requested_size().map(|s| (s.w, s.h));
+                (t.window().window.clone(), s)
+            })
+            .collect()
+    };
+    let asked = ws_sizes(&mut f);
+    let size_of = |list: &[(Window, Option<(i32, i32)>)], w: &Window| {
+        list.iter().find(|(win, _)| win == w).and_then(|(_, s)| *s)
+    };
+    assert_eq!(size_of(&asked, &a).map(|s| s.0), Some(960));
+    assert_eq!(size_of(&asked, &b).map(|s| s.0), Some(960));
+
+    // brought up: the other part comes too, c (not snapped) stays under them
+    f.niri().layout.activate_window(&c);
+    f.niri().layout.activate_window(&a);
+    let order: Vec<Window> = {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.floating()
+            .tiles()
+            .map(|t| t.window().window.clone())
+            .collect()
+    };
+    assert_eq!(order, vec![a.clone(), b.clone(), c.clone()]);
+
+    // a's right edge dragged 100 px right: b gives way by its left edge
+    let layout = &mut f.niri().layout;
+    assert!(layout.interactive_resize_begin(a.clone(), crate::utils::ResizeEdge::RIGHT));
+    layout.interactive_resize_update(&a, Point::from((100., 0.)));
+    let asked = ws_sizes(&mut f);
+    assert_eq!(size_of(&asked, &a).map(|s| s.0), Some(1060));
+    assert_eq!(size_of(&asked, &b).map(|s| s.0), Some(860));
+    // b's left edge follows as it takes that size: no gap, no overlap
+    f.double_roundtrip(id);
+    for (surface, w) in [(&sa, 1060), (&sb, 860)] {
+        let window = f.client(id).window(surface);
+        window.set_size(w, 1080);
+        window.ack_last_and_commit();
+    }
+    f.double_roundtrip(id);
+    f.niri().layout.interactive_resize_end(&a);
+    let xs: Vec<(Window, f64)> = {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.floating()
+            .tiles_with_offsets()
+            .map(|(t, pos)| (t.window().window.clone(), pos.x))
+            .collect()
+    };
+    let x_of = |w: &Window| xs.iter().find(|(win, _)| win == w).map(|(_, x)| *x);
+    assert_eq!(x_of(&a), Some(0.));
+    assert_eq!(x_of(&b), Some(1060.));
+    set_stacking(&mut f, id, false);
+}
