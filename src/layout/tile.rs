@@ -662,6 +662,37 @@ impl<W: LayoutElement> Tile<W> {
         (sx != 1. || sy != 1.).then(|| (Scale { x: sx, y: sy }, origin))
     }
 
+    /// angel-niri (window_pulse.rs): grown around its middle on the music's kick, in whole pixels
+    /// of the pixel corners: the scale and its origin in the tile. The space wraps the tile's
+    /// elements in a rescale as they are, nothing is drawn offscreen. Not fullscreen ones, nor
+    /// one already squashed, stretched, thrown or opening.
+    pub fn pulse(&self) -> Option<(Scale<f64>, Point<f64, Logical>)> {
+        let grow = crate::window_pulse::grow(self.clock.now());
+        let size = self.animated_tile_size();
+        if grow <= 0.
+            || self.sizing_mode.is_fullscreen()
+            || size.w <= 0.
+            || size.h <= 0.
+            || self.squash.is_some()
+            || self.wobble.is_some()
+            || self.fly.is_some()
+            || self.open_animation.is_some()
+        {
+            return None;
+        }
+        let px = f64::from(crate::pixel_corners::pixel()).max(1.);
+        let grow = (grow / px).round() * px;
+        (grow > 0.).then(|| {
+            (
+                Scale {
+                    x: 1. + 2. * grow / size.w,
+                    y: 1. + 2. * grow / size.h,
+                },
+                Point::from((size.w / 2., size.h / 2.)),
+            )
+        })
+    }
+
     pub fn is_moving_between_workspaces(&self) -> bool {
         self.move_y_animation
             .as_ref()

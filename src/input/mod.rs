@@ -1107,6 +1107,10 @@ impl State {
                 crate::cursor_zoom::set(zoom, ms, self.niri.clock.now());
                 self.niri.queue_redraw_all();
             }
+            Action::WindowPulse(px, ms) => {
+                crate::window_pulse::set(px, ms, self.niri.clock.now());
+                self.niri.queue_redraw_all();
+            }
             Action::SetPixelShadow(pixel) => {
                 crate::pixel_shadow::set(pixel as f32);
                 // the window rules don't change, so their tiles are told directly

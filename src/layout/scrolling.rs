@@ -7,6 +7,7 @@ use niri_config::utils::MergeWith as _;
 use niri_config::{CenterFocusedColumn, PresetSize, Struts};
 use niri_ipc::{ColumnDisplay, SizeChange, WindowLayout};
 use ordered_float::NotNan;
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
@@ -100,6 +101,7 @@ niri_render_elements! {
         Tile = TileRenderElement<R>,
         ClosingWindow = ClosingWindowRenderElement,
         TabIndicator = TabIndicatorRenderElement,
+        Pulse = RescaleRenderElement<TileRenderElement<R>>,
     }
 }
 
@@ -3033,6 +3035,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 }
 
                 let xray_pos = xray_pos.offset(tile_pos);
+                // angel-niri (window_pulse.rs): springing to the music, rescaled as it is
+                if let Some((grow, origin)) = tile.pulse() {
+                    let origin = (tile_pos + origin).to_physical_precise_round(scale);
+                    tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
+                        push(ScrollingSpaceRenderElement::Pulse(
+                            RescaleRenderElement::from_element(elem, origin, grow),
+                        ))
+                    });
+                    continue;
+                }
                 tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
                     push(elem.into())
                 });

@@ -674,6 +674,20 @@ pub enum Action {
         #[serde(default = "default_cursor_zoom_ms")]
         ms: u32,
     },
+    /// Make every window spring for a moment (angel-niri).
+    ///
+    /// The windows grow by `px` logical pixels on each side and back over `ms` milliseconds,
+    /// drawn only (the layout doesn't move); fullscreen windows stay as they are.
+    #[cfg_attr(feature = "clap", clap(about = "Make the windows spring for a moment"))]
+    WindowPulse {
+        /// How far they grow on each side, 0 to 8.
+        #[cfg_attr(feature = "clap", arg())]
+        px: f64,
+        /// How long the spring takes.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 180))]
+        #[serde(default = "default_window_pulse_ms")]
+        ms: u32,
+    },
     /// Turn on pixel window shadows (angel-niri).
     ///
     /// Windows get the layout's shadow drawn as dithered dots of `pixel` logical pixels instead
@@ -2865,6 +2879,10 @@ fn default_desk_throw_strength() -> u8 {
 
 fn default_cursor_zoom_ms() -> u32 {
     170
+}
+
+fn default_window_pulse_ms() -> u32 {
+    180
 }
 
 fn default_pixel_steps() -> u32 {

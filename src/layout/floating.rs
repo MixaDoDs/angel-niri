@@ -5,6 +5,7 @@ use std::rc::Rc;
 use niri_config::utils::MergeWith as _;
 use niri_config::{PresetSize, RelativeTo};
 use niri_ipc::{PositionChange, SizeChange, WindowLayout};
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
@@ -100,6 +101,7 @@ niri_render_elements! {
     FloatingSpaceRenderElement<R> => {
         Tile = TileRenderElement<R>,
         ClosingWindow = ClosingWindowRenderElement,
+        Pulse = RescaleRenderElement<TileRenderElement<R>>,
     }
 }
 
@@ -1366,6 +1368,16 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
 
             let xray_pos = xray_pos.offset(tile_pos);
+            // angel-niri (window_pulse.rs): springing to the music, rescaled as it is
+            if let Some((grow, origin)) = tile.pulse() {
+                let origin = (tile_pos + origin).to_physical_precise_round(scale);
+                tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
+                    push(FloatingSpaceRenderElement::Pulse(
+                        RescaleRenderElement::from_element(elem, origin, grow),
+                    ))
+                });
+                continue;
+            }
             tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
                 push(elem.into())
             });

@@ -5204,6 +5204,8 @@ impl Niri {
                 .is_current_cursor_animated(output.current_scale().integer_scale());
             // …or growing or shrinking (angel-niri cursor_zoom)
             state.unfinished_animations_remain |= crate::cursor_zoom::animating(self.clock.now());
+            // …or the windows spring to the music (angel-niri window_pulse)
+            state.unfinished_animations_remain |= crate::window_pulse::animating(self.clock.now());
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {
