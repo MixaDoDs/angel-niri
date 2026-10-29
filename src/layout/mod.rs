@@ -507,6 +507,8 @@ pub struct Layout<W: LayoutElement> {
     /// workspace each came from.
     // shortcut: a closed window's entry stays (ids are never reused); prune it if this grows.
     fullscreen_from: Vec<(W::Id, WorkspaceId)>,
+    /// angel-niri (window_peek.rs): the window peeked at, the others on its output melted away.
+    window_peek: Option<W::Id>,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -903,6 +905,7 @@ impl<W: LayoutElement> Layout<W> {
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
+            window_peek: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
@@ -936,6 +939,7 @@ impl<W: LayoutElement> Layout<W> {
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
+            window_peek: None,
             minimized: Vec::new(),
             stacked: Vec::new(),
             desk_gathered: Vec::new(),
@@ -1836,6 +1840,22 @@ impl<W: LayoutElement> Layout<W> {
         };
         if let Some(mon) = mon {
             mon.toggle_desk_peek();
+        }
+    }
+
+    /// angel-niri (window_peek.rs): peek at this window — the others on its output melt away —
+    /// or, with `None`, stop.
+    pub fn set_window_peek(&mut self, window: Option<W::Id>) {
+        self.window_peek = window;
+        self.refresh_window_peek();
+    }
+
+    fn refresh_window_peek(&mut self) {
+        let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
+            return;
+        };
+        for mon in monitors {
+            mon.set_ghosts(self.window_peek.as_ref());
         }
     }
 
@@ -5325,6 +5345,10 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn refresh(&mut self, is_active: bool) {
+        // angel-niri (window_peek.rs): the ghosts follow the peeked window in front or not
+        if self.window_peek.is_some() {
+            self.refresh_window_peek();
+        }
         let _span = tracy_client::span!("Layout::refresh");
 
         self.is_active = is_active;

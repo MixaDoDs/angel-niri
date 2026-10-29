@@ -127,6 +127,7 @@ impl Shaders {
                 UniformName::new("throw_ghost2", UniformType::_4f),
                 UniformName::new("throw_dent", UniformType::_4f),
                 UniformName::new("throw_dent_in", UniformType::_2f),
+                UniformName::new("throw_keep", UniformType::_1f),
             ],
             &["niri_tex"],
         )

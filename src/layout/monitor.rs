@@ -487,6 +487,31 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
+    /// angel-niri (window_peek.rs): with `peek` in sight on the workspace in front, its other
+    /// windows melt away (one scrolled out of the view would leave nothing to see); everything
+    /// else is whole.
+    pub(super) fn set_ghosts(&mut self, peek: Option<&W::Id>) {
+        let here = peek.is_some_and(|id| {
+            let ws = self.active_workspace_ref();
+            let view = Rectangle::from_size(ws.view_size());
+            (ws.tiles_with_render_positions()).any(|(tile, pos, visible)| {
+                let seen = view.intersection(Rectangle::new(pos, tile.tile_size()));
+                visible
+                    && tile.window().id() == id
+                    && seen.is_some_and(|r| {
+                        r.size.w >= crate::window_peek::SEEN && r.size.h >= crate::window_peek::SEEN
+                    })
+            })
+        });
+        let front = self.active_workspace_idx;
+        for (idx, ws) in self.workspaces.iter_mut().enumerate() {
+            for tile in ws.tiles_mut() {
+                let ghost = here && idx == front && Some(tile.window().id()) != peek;
+                tile.set_ghost(ghost);
+            }
+        }
+    }
+
     /// angel-niri (desk_peek.rs): whether this window is on its workspace in front.
     pub(super) fn has_window_in_front(&self, window: &W::Id) -> bool {
         self.active_workspace_ref()

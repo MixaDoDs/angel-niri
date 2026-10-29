@@ -321,6 +321,8 @@ pub enum Action {
     #[knuffel(skip)]
     ShowDesktop(Option<String>),
     #[knuffel(skip)]
+    PeekWindow(Option<u64>),
+    #[knuffel(skip)]
     SetPixelCorners(f64, u32),
     #[knuffel(skip)]
     SetPixelOverview(f64, String),
@@ -723,6 +725,7 @@ impl From<niri_ipc::Action> for Action {
                 Self::SetHideWindowsLayer(namespace, on)
             }
             niri_ipc::Action::ShowDesktop { output } => Self::ShowDesktop(output),
+            niri_ipc::Action::PeekWindow { id } => Self::PeekWindow(id),
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)
             }

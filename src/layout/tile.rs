@@ -143,6 +143,9 @@ pub struct Tile<W: LayoutElement> {
     /// angel-niri (desk_peek.rs): how far across it parts to show the desktop, how far it is
     /// there (0 .. 1) and the way it goes now.
     desk_peek: Option<(f64, f64, Option<Animation>)>,
+    /// angel-niri (window_peek.rs): melted away while another window is peeked at: how far (0
+    /// whole .. 1 a ghost) and the way it goes now.
+    ghost: Option<(f64, Option<Animation>)>,
     /// angel-niri (desk_throw.rs): thrown onto desk 1 or back off it as stacking starts or ends.
     fly: Option<crate::desk_throw::Fly>,
     /// angel-niri (desk_throw.rs): crushed by a hit for real: the window's own size to go back
@@ -279,6 +282,7 @@ impl<W: LayoutElement> Tile<W> {
             shade_anim: None,
             hop_anim: None,
             desk_peek: None,
+            ghost: None,
             fly: None,
             desk_squash: None,
             shade_seen: false,
@@ -514,6 +518,14 @@ impl<W: LayoutElement> Tile<W> {
                 self.desk_peek = None;
             }
         }
+        if let Some((at, anim)) = &mut self.ghost {
+            if let Some(a) = anim.take_if(|a| a.is_done()) {
+                *at = a.to();
+            }
+            if anim.is_none() && *at == 0. {
+                self.ghost = None;
+            }
+        }
         // a window leaving keeps its flight's end (below the output) until it goes
         if self.fly.as_ref().is_some_and(|f| f.is_done() && !f.leaving) {
             self.fly = None;
@@ -580,6 +592,7 @@ impl<W: LayoutElement> Tile<W> {
             || self.shade_anim.is_some()
             || self.hop_anim.is_some()
             || self.desk_peek.as_ref().is_some_and(|(_, _, a)| a.is_some())
+            || self.ghost.as_ref().is_some_and(|(_, a)| a.is_some())
             || self.fly.as_ref().is_some_and(|f| !f.is_done())
     }
 
@@ -825,6 +838,24 @@ impl<W: LayoutElement> Tile<W> {
             *at = anim.as_ref().map_or(*at, Animation::value);
             *anim = Some(crate::desk_peek::animation(self.clock.clone(), *at, 0.));
         }
+    }
+
+    /// angel-niri (window_peek.rs): how far it has melted away, 0 whole .. 1 a ghost.
+    pub fn ghost(&self) -> f64 {
+        (self.ghost.as_ref()).map_or(0., |(at, anim)| anim.as_ref().map_or(*at, Animation::value))
+    }
+
+    /// angel-niri (window_peek.rs): melts away while another window is peeked at, or comes back.
+    pub fn set_ghost(&mut self, on: bool) {
+        let to = if on { 1. } else { 0. };
+        let going =
+            (self.ghost.as_ref()).map_or(0., |(at, anim)| anim.as_ref().map_or(*at, Animation::to));
+        if going == to {
+            return;
+        }
+        let from = self.ghost();
+        let anim = crate::window_peek::animation(self.clock.clone(), from, to);
+        self.ghost = Some((from, Some(anim)));
     }
 
     /// angel-niri (desk_throw.rs): throws the tile; as in `Fly::new`. Not with the window
@@ -1856,6 +1887,13 @@ impl<W: LayoutElement> Tile<W> {
         let fly_look = (self.fly.as_ref())
             .map(|fly| (fly.angle(), fly.trail(), fly.dent()))
             .filter(|(angle, trail, dent)| *angle != 0. || !trail.is_empty() || dent.is_some());
+        // angel-niri (window_peek.rs): melted away, through the same cells as a throw; all gone,
+        // not drawn at all
+        let keep = crate::window_peek::keep(self.ghost());
+        if keep <= 0. {
+            return;
+        }
+        let fly_look = fly_look.or_else(|| (keep < 1.).then(|| (0., Vec::new(), None)));
         if let Some((angle, trail, dent)) = fly_look {
             let mut ctx = ctx.as_gles();
             let mut elements = Vec::new();
@@ -1879,6 +1917,7 @@ impl<W: LayoutElement> Tile<W> {
                             angle,
                             &trail,
                             dent,
+                            keep,
                             scale,
                             tile_alpha,
                         );
@@ -2157,6 +2196,7 @@ fn throw_element(
     angle: f64,
     trail: &[crate::desk_throw::Ghost],
     dent: Option<([f32; 4], [f32; 2])>,
+    keep: f64,
     scale: Scale<f64>,
     alpha: f32,
 ) -> ShaderRenderElement {
@@ -2207,6 +2247,7 @@ fn throw_element(
             Uniform::new("throw_ghost2", ghost(2)),
             Uniform::new("throw_dent", dent.map_or([0.; 4], |d| d.0)),
             Uniform::new("throw_dent_in", dent.map_or([0., 1.], |d| d.1)),
+            Uniform::new("throw_keep", keep as f32),
         ]),
         HashMap::from([(String::from("niri_tex"), texture.clone())]),
         Kind::Unspecified,

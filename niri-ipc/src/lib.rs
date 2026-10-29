@@ -821,6 +821,20 @@ pub enum Action {
         #[serde(default)]
         output: Option<String>,
     },
+    /// Peek at a window: the others on its output melt into a sparse dither (angel-niri).
+    ///
+    /// As Aero Peek on Windows' taskbar: the window alone is seen where it stands, while it is on
+    /// its output's workspace in front. Without an id, the others come back.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Peek at a window (the others melt away)")
+    )]
+    PeekWindow {
+        /// Id of the window to peek at; none: stop peeking.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        id: Option<u64>,
+    },
     /// Minimize a window: take it out of the layout until it is focused again.
     #[cfg_attr(feature = "clap", clap(about = "Minimize the focused window"))]
     MinimizeWindow {

@@ -4,6 +4,7 @@
 // the same cells by a 4×4 Bayer: the speed shows without a blur. Where it hit hardest it is
 // dented (`throw_dent`: the spot on its edge, how deep, how far along it; `throw_dent_in`: the way
 // in, all in its own px): the edge pushed in, the picture crushed up behind it, a dark crease.
+// Only `throw_keep` of its Bayer cells are drawn (window_peek.rs: the others melted away).
 precision highp float;
 
 uniform float niri_alpha;
@@ -22,6 +23,7 @@ uniform vec4 throw_ghost1;
 uniform vec4 throw_ghost2;
 uniform vec4 throw_dent;
 uniform vec2 throw_dent_in;
+uniform float throw_keep;
 
 // where `p` falls on the window placed at `loc` turned by `angle`, in its own px; < 0 outside
 vec2 onTile(vec2 p, vec2 loc, float angle) {
@@ -95,7 +97,9 @@ void main() {
     vec2 q = onTile(p, throw_tile_loc, throw_angle);
     vec4 color = vec4(0.0);
     vec3 dq = q.x >= 0.0 ? dented(q) : vec3(-1.0);
-    if (dq.x >= 0.0)
+    if (dq.x >= 0.0 && bayer(cell) >= throw_keep) {
+        // melted away: what is behind it shows
+    } else if (dq.x >= 0.0)
         color = sampleTile(dq.xy) * vec4(vec3(dq.z), 1.0);
     else if (q.x >= 0.0) {
         // pushed in: what is behind it shows

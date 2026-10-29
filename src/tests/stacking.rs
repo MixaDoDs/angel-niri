@@ -715,3 +715,60 @@ fn desk_peek_parts_windows_and_brings_them_back() {
     f.niri_complete_animations();
     back(&mut f);
 }
+
+// peek-window: the other windows on the output melt into ghosts, the peeked one stays whole;
+// another workspace in front brings them back whole, and so does peeking at nothing
+#[test]
+fn window_peek_melts_the_others() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let a = open(&mut f, id, 400, 300);
+    let b = open(&mut f, id, 400, 300);
+    let c = open(&mut f, id, 400, 300);
+    f.niri_complete_animations();
+
+    let ghosts = |f: &mut Fixture| -> Vec<(Window, f64)> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        ws.tiles()
+            .map(|tile| (tile.window().window.clone(), tile.ghost()))
+            .collect()
+    };
+    f.niri().layout.set_window_peek(Some(b.clone()));
+    f.niri_complete_animations();
+    for (win, ghost) in ghosts(&mut f) {
+        assert_eq!(ghost, if win == b { 0. } else { 1. }, "{win:?}");
+    }
+    assert!(ghosts(&mut f).iter().any(|(w, _)| *w == a || *w == c));
+
+    f.niri().layout.set_window_peek(None);
+    f.niri_complete_animations();
+    assert!(ghosts(&mut f).iter().all(|(_, g)| *g == 0.));
+
+    // a column scrolled out of the view: nothing to see there, so nothing melts
+    let d = open(&mut f, id, 1200, 300);
+    let e = open(&mut f, id, 1200, 300);
+    f.niri_complete_animations();
+    let seen = |f: &mut Fixture, w: &Window| {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        let view = smithay::utils::Rectangle::from_size(ws.view_size());
+        ws.tiles_with_render_positions().any(|(tile, pos, _)| {
+            tile.window().window == *w
+                && view
+                    .intersection(smithay::utils::Rectangle::new(pos, tile.tile_size()))
+                    .is_some()
+        })
+    };
+    let out = [&a, &b, &c, &d, &e]
+        .into_iter()
+        .find(|w| !seen(&mut f, w))
+        .cloned();
+    if let Some(out) = out {
+        f.niri().layout.set_window_peek(Some(out));
+        f.niri_complete_animations();
+        assert!(ghosts(&mut f).iter().all(|(_, g)| *g == 0.));
+        f.niri().layout.set_window_peek(None);
+    } else {
+        panic!("all columns in view; the test needs one out of it");
+    }
+}

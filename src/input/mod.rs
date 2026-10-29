@@ -1145,6 +1145,15 @@ impl State {
                 self.niri.layout.toggle_desk_peek(output.as_ref());
                 self.niri.queue_redraw_all();
             }
+            Action::PeekWindow(id) => {
+                let window = id.and_then(|id| {
+                    (self.niri.layout.windows())
+                        .find(|(_, m)| m.id().get() == id)
+                        .map(|(_, m)| m.window.clone())
+                });
+                self.niri.layout.set_window_peek(window);
+                self.niri.queue_redraw_all();
+            }
             Action::SetWindowBehindScene(id, behind) => {
                 self.niri.set_window_behind_scene(id, behind);
             }
