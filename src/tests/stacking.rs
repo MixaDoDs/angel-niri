@@ -714,6 +714,26 @@ fn desk_peek_parts_windows_and_brings_them_back() {
     let _c = open(&mut f, id, 200, 200);
     f.niri_complete_animations();
     back(&mut f);
+
+    // a key that parted them let go at once (a tap) leaves them parted; held, it brings them back
+    f.niri().layout.toggle_desk_peek(None);
+    f.niri().layout.release_desk_peek(None);
+    f.niri_complete_animations();
+    assert!(
+        !places(&mut f).contains(&rest[0]),
+        "a tap brought them back"
+    );
+    f.niri().layout.toggle_desk_peek(None);
+    f.niri_complete_animations();
+    back(&mut f);
+    f.niri().layout.toggle_desk_peek(None);
+    let niri = f.niri();
+    let now = niri.clock.now_unadjusted();
+    niri.clock
+        .set_unadjusted(now + std::time::Duration::from_millis(400));
+    f.niri().layout.release_desk_peek(None);
+    f.niri_complete_animations();
+    back(&mut f);
 }
 
 // peek-window: the other windows on the output melt into ghosts, the peeked one stays whole;

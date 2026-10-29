@@ -159,6 +159,9 @@ pub struct Mapped {
     on_top: bool,
     sticky: bool,
 
+    /// angel-niri (window_dither.rs): how much of it is drawn in dots, 1 = whole.
+    dither: f32,
+
     /// Whether this window is in windowed (fake) fullscreen.
     ///
     /// In this mode, the underlying window is told that it's fullscreen, while keeping it as
@@ -333,6 +336,7 @@ impl Mapped {
             title_button_down: Cell::new(None),
             title_hover: Cell::new(None),
             shaded: false,
+            dither: 1.,
             on_top: false,
             sticky: false,
             is_windowed_fullscreen: false,
@@ -556,6 +560,10 @@ impl Mapped {
 
     pub fn set_shaded(&mut self, on: bool) {
         self.shaded = on;
+    }
+
+    pub fn set_dither(&mut self, level: f32) {
+        self.dither = level;
     }
 
     pub fn set_on_top(&mut self, on: bool) {
@@ -1061,6 +1069,10 @@ impl LayoutElement for Mapped {
 
     fn is_sticky(&self) -> bool {
         self.sticky
+    }
+
+    fn dither(&self) -> f32 {
+        self.dither
     }
 
     fn has_ssd(&self) -> bool {

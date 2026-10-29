@@ -159,6 +159,11 @@ pub struct Tile<W: LayoutElement> {
     /// Extra damage for clipped surface corner radius changes.
     rounded_corner_damage: RoundedCornerDamage,
 
+    /// angel-niri (window_dither.rs): the window's dots as last seen, and their damage when they
+    /// change (the surfaces themselves did not commit).
+    dither_seen: f32,
+    dither_damage: ExtraDamage,
+
     /// The view size for the tile's workspace.
     ///
     /// Used as the fullscreen target size.
@@ -288,6 +293,8 @@ impl<W: LayoutElement> Tile<W> {
             shade_seen: false,
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
+            dither_seen: 1.,
+            dither_damage: ExtraDamage::new(),
             view_size,
             scale,
             clock,
@@ -495,6 +502,13 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn advance_animations(&mut self) {
+        // angel-niri (window_dither.rs): the dots redrawn when they change
+        let dither = self.window.dither();
+        if dither != self.dither_seen {
+            self.dither_seen = dither;
+            self.dither_damage.damage_all();
+        }
+
         // angel-niri (desk_flags.rs): the window rolls up under its title bar, or down
         let shaded = self.is_shaded();
         if shaded != self.shade_seen {
@@ -709,9 +723,11 @@ impl<W: LayoutElement> Tile<W> {
         let animated_tile_size = self.animated_tile_size();
         let expanded_progress = self.expanded_progress();
 
+        // angel-niri (window_dither.rs): through a see-through window shows what is under it
         let draw_border_with_background = rules
             .draw_border_with_background
-            .unwrap_or_else(|| !self.window.has_ssd());
+            .unwrap_or_else(|| !self.window.has_ssd())
+            && self.window.dither() >= 1.;
         let border_width = self.visual_border_width().unwrap_or(0.);
 
         // Do the inverse of tile_size() in order to handle the unfullscreen animation for windows
@@ -1749,6 +1765,13 @@ impl<W: LayoutElement> Tile<W> {
             let radius = radius.fit_to(window_size.w as f32, window_size.h as f32);
 
             let clip_shader = ClippedSurfaceRenderElement::shader(ctx.renderer).cloned();
+            // angel-niri (window_dither.rs): see-through in dots, drawn by the clip shader; whole
+            // when fullscreen
+            let dither = if fullscreen_progress > 0. {
+                1.
+            } else {
+                self.dither_seen
+            };
             let clip = |elem| match elem {
                 LayoutElementRenderElement::Wayland(elem) => {
                     // If we should clip to geometry, render a clipped window.
@@ -1762,8 +1785,30 @@ impl<W: LayoutElement> Tile<W> {
                                     shader.clone(),
                                     radius,
                                 )
+                                .with_dither(dither)
                                 .into();
                             }
+                        }
+                    }
+
+                    // angel-niri (window_dither.rs): in dots, through the shader, unclipped
+                    if dither < 1. {
+                        if let Some(shader) = clip_shader.clone() {
+                            let own = elem.geometry(scale).to_f64().to_logical(scale);
+                            let bounds = if clip_to_geometry { geo } else { own };
+                            return ClippedSurfaceRenderElement::new(
+                                elem,
+                                scale,
+                                bounds,
+                                shader.clone(),
+                                if clip_to_geometry {
+                                    radius
+                                } else {
+                                    CornerRadius::default()
+                                },
+                            )
+                            .with_dither(dither)
+                            .into();
                         }
                     }
 
@@ -1811,6 +1856,9 @@ impl<W: LayoutElement> Tile<W> {
             if clip_to_geometry && clip_shader.is_some() {
                 let damage = self.rounded_corner_damage.render(geo);
                 push(damage.into());
+            }
+            if dither < 1. {
+                push(self.dither_damage.render(geo).into());
             }
 
             self.window

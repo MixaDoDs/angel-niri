@@ -1144,10 +1144,20 @@ impl State {
                 crate::desk_peek::set_hide_layer(namespace, on);
                 self.niri.queue_redraw_all();
             }
-            Action::ShowDesktop(output) => {
+            Action::ShowDesktop(output, release) => {
                 let output = output.and_then(|name| self.niri.output_by_name_match(&name).cloned());
-                self.niri.layout.toggle_desk_peek(output.as_ref());
+                if release {
+                    self.niri.layout.release_desk_peek(output.as_ref());
+                } else {
+                    self.niri.layout.toggle_desk_peek(output.as_ref());
+                }
                 self.niri.queue_redraw_all();
+            }
+            Action::SetDitherWheel(on) => {
+                crate::window_dither::set_wheel(on);
+            }
+            Action::SetWindowDither(level, id) => {
+                self.set_window_dither(id, level as f32);
             }
             Action::SnapWindow(id, zone) => {
                 let window = match id {
@@ -3751,6 +3761,15 @@ impl State {
             let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();
             let plain = !(mods.ctrl || mods.alt || mods.shift || mods.logo);
             if plain && self.stacking_frame_wheel(vertical_amount) {
+                return;
+            }
+            // angel-niri (window_dither.rs): Alt+wheel, see-through in dots (not when Alt is the
+            // Mod key, as nested: its wheel binds win)
+            let alt = mods.alt && !(mods.ctrl || mods.shift || mods.logo);
+            if alt
+                && mod_key != ModKey::Alt
+                && self.dither_wheel(vertical_amount_v120.unwrap_or(0.))
+            {
                 return;
             }
         }

@@ -22,6 +22,8 @@ pub struct ClippedSurfaceRenderElement<R: NiriRenderer> {
     corner_radius: CornerRadius,
     geometry: Rectangle<f64, Logical>,
     scale: f32,
+    /// angel-niri (window_dither.rs): how much is drawn in dots, 1 = whole.
+    dither: f32,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -44,7 +46,14 @@ impl<R: NiriRenderer> ClippedSurfaceRenderElement<R> {
             corner_radius,
             geometry,
             scale: scale.x as f32,
+            dither: 1.,
         }
+    }
+
+    /// angel-niri (window_dither.rs): drawn in dots, `level` of it.
+    pub fn with_dither(mut self, level: f32) -> Self {
+        self.dither = level;
+        self
     }
 
     fn compute_uniforms(&self) -> Vec<Uniform<'static>> {
@@ -97,6 +106,12 @@ impl<R: NiriRenderer> ClippedSurfaceRenderElement<R> {
             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
             mat3_uniform("input_to_geo", input_to_geo),
             Uniform::new("niri_pixel", crate::pixel_corners::pixel()),
+            Uniform::new("niri_dither", self.dither),
+            // an art pixel, a physical one when pixel corners are off
+            Uniform::new(
+                "niri_dither_cell",
+                (crate::pixel_corners::pixel() * self.scale).round().max(1.),
+            ),
         ]
     }
 
@@ -194,6 +209,10 @@ impl<R: NiriRenderer> Element for ClippedSurfaceRenderElement<R> {
     }
 
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        // angel-niri (window_dither.rs): in dots, what is under shows through
+        if self.dither < 1. {
+            return OpaqueRegions::default();
+        }
         let regions = self.inner.opaque_regions(scale);
 
         // Intersect with geometry, since we're clipping by it.

@@ -42,6 +42,7 @@ pub mod stacking_title;
 pub mod ui;
 pub mod utils;
 pub mod window;
+pub mod window_dither;
 pub mod window_peek;
 pub mod window_pulse;
 pub mod window_throw;

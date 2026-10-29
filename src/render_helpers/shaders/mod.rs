@@ -149,6 +149,8 @@ impl Shaders {
                     UniformName::new("corner_radius", UniformType::_4f),
                     UniformName::new("input_to_geo", UniformType::Matrix3x3),
                     UniformName::new("niri_pixel", UniformType::_1f),
+                    UniformName::new("niri_dither", UniformType::_1f),
+                    UniformName::new("niri_dither_cell", UniformType::_1f),
                 ],
             )
             .map_err(|err| {

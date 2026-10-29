@@ -319,7 +319,11 @@ pub enum Action {
     #[knuffel(skip)]
     SetHideWindowsLayer(String, bool),
     #[knuffel(skip)]
-    ShowDesktop(Option<String>),
+    ShowDesktop(Option<String>, bool),
+    #[knuffel(skip)]
+    SetDitherWheel(bool),
+    #[knuffel(skip)]
+    SetWindowDither(f64, Option<u64>),
     #[knuffel(skip)]
     PeekWindow(Option<u64>),
     #[knuffel(skip)]
@@ -729,8 +733,10 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetHideWindowsLayer { namespace, on } => {
                 Self::SetHideWindowsLayer(namespace, on)
             }
-            niri_ipc::Action::ShowDesktop { output } => Self::ShowDesktop(output),
+            niri_ipc::Action::ShowDesktop { output, release } => Self::ShowDesktop(output, release),
             niri_ipc::Action::PeekWindow { id } => Self::PeekWindow(id),
+            niri_ipc::Action::SetDitherWheel { on } => Self::SetDitherWheel(on),
+            niri_ipc::Action::SetWindowDither { level, id } => Self::SetWindowDither(level, id),
             niri_ipc::Action::SnapWindow { id, zone } => Self::SnapWindow(id, zone),
             niri_ipc::Action::SetWindowBehindScene { id, behind } => {
                 Self::SetWindowBehindScene(id, behind)

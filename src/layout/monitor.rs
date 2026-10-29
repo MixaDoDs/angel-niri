@@ -458,7 +458,18 @@ impl<W: LayoutElement> Monitor<W> {
             workspace,
             windows,
             focus,
+            since: self.clock.now_unadjusted(),
         });
+    }
+
+    /// angel-niri (desk_peek.rs): the key that parted the windows is let go — back if it was held.
+    pub fn release_desk_peek(&mut self) {
+        let Some(peek) = &self.desk_peek else {
+            return;
+        };
+        if crate::desk_peek::held(peek.since, self.clock.now_unadjusted()) {
+            self.end_desk_peek();
+        }
     }
 
     /// angel-niri (desk_peek.rs): the parted windows come back.

@@ -345,6 +345,10 @@ pub trait LayoutElement {
     fn is_sticky(&self) -> bool {
         false
     }
+    /// angel-niri (window_dither.rs): how much of it is drawn in dots, 1 = whole.
+    fn dither(&self) -> f32 {
+        1.
+    }
     fn set_preferred_scale_transform(&self, scale: output::Scale, transform: Transform);
     fn output_enter(&self, output: &Output);
     fn output_leave(&self, output: &Output);
@@ -1859,6 +1863,17 @@ impl<W: LayoutElement> Layout<W> {
         };
         if let Some(mon) = mon {
             mon.toggle_desk_peek();
+        }
+    }
+
+    /// angel-niri (desk_peek.rs): the key that parted the windows is let go.
+    pub fn release_desk_peek(&mut self, output: Option<&Output>) {
+        let mon = match output {
+            Some(output) => self.monitor_for_output_mut(output),
+            None => self.active_monitor(),
+        };
+        if let Some(mon) = mon {
+            mon.release_desk_peek();
         }
     }
 

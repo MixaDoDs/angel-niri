@@ -3,13 +3,15 @@
 //! left in sight; again — they come back. A click on a window (its strip, a taskbar, Alt-Tab), a
 //! window opened or closed there, another workspace or another window focused bring them back too.
 //! Meanwhile no window has the keyboard (`Monitor::is_desk_peek`). The windows only move as drawn
-//! (`Tile::render_offset`): their places in the layout stay as they were.
+//! (`Tile::render_offset`): their places in the layout stay as they were. A key bound to press and
+//! release (`show-desktop --release` on letting go) peeks while held, a tap leaves them parted.
 //!
 //! Also `set-hide-windows-layer --namespace NS [--on false]`: while a layer surface of that
 //! namespace is mapped on an output, the output's windows are not drawn — a shell's Mission
 //! Control shows the desktop under its cards. Nothing goes to niri's config.
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::animation::{Animation, Clock, Curve};
 use crate::layout::workspace::WorkspaceId;
@@ -19,6 +21,9 @@ pub const STRIP: f64 = 32.;
 /// Out at once and settling (the windows make way), back a little quicker.
 const OUT_MS: u64 = 380;
 const BACK_MS: u64 = 300;
+/// A key let go later than this after it parted the windows was held to peek: they come back.
+/// A quicker tap leaves them parted.
+const HOLD_MS: u64 = 300;
 
 /// How far across a window at `x`, `w` wide, goes in a view `width` wide: to the nearer side, its
 /// strip left in sight; one already off that side stays.
@@ -28,6 +33,11 @@ pub fn shift(x: f64, w: f64, width: f64) -> f64 {
     } else {
         (width - STRIP - x).max(0.)
     }
+}
+
+/// Whether the key that parted the windows at `since` and is let go `now` was held to peek.
+pub fn held(since: Duration, now: Duration) -> bool {
+    now.saturating_sub(since) >= Duration::from_millis(HOLD_MS)
 }
 
 /// The parting's progress, 0 in place .. 1 at the edge, from `from` to `to`.
@@ -42,6 +52,8 @@ pub struct Peek<Id> {
     pub workspace: WorkspaceId,
     pub windows: Vec<Id>,
     pub focus: Option<Id>,
+    /// When they parted.
+    pub since: Duration,
 }
 
 impl<Id: PartialEq> Peek<Id> {
@@ -75,6 +87,14 @@ pub fn hides_windows(namespace: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tap_is_not_a_hold() {
+        let since = Duration::from_secs(5);
+        assert!(!held(since, since + Duration::from_millis(120)));
+        assert!(held(since, since + Duration::from_millis(HOLD_MS)));
+        assert!(!held(since, since - Duration::from_millis(1)));
+    }
 
     #[test]
     fn parts_to_the_nearer_side() {

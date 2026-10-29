@@ -403,6 +403,34 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Let Alt+wheel over a window make it see-through in dots (angel-niri).
+    ///
+    /// On, the wheel turned down over a window with only Alt held draws less of it — a pixel
+    /// Bayer screen door, no blending — and up, more; a fullscreen window stays whole and the
+    /// wheel goes to it. Nothing is remembered.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Let Alt+wheel make a window see-through in dots")
+    )]
+    SetDitherWheel {
+        /// On (`true`, the default) or off.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
+    /// Make a window see-through in dots (angel-niri).
+    ///
+    /// `level` is how much of it is drawn, from 0.25 to 1 (whole), in eighths.
+    #[cfg_attr(feature = "clap", clap(about = "Make a window see-through in dots"))]
+    SetWindowDither {
+        /// How much of the window is drawn, 0.25 .. 1.
+        #[cfg_attr(feature = "clap", arg())]
+        level: f64,
+        /// Id of the window; the focused one if not given.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        id: Option<u64>,
+    },
     /// Throw windows between desks as stacking starts and ends (angel-niri).
     ///
     /// On, the windows stacking gathers onto a monitor's first workspace fly in one after another
@@ -825,6 +853,9 @@ pub enum Action {
     /// As on macOS: the windows of the output's workspace move to the nearer side, a strip of each
     /// left in sight. Again, a click on a window, focusing one, a window opened or closed there or
     /// another workspace bring them back.
+    ///
+    /// For a key held to peek at the desktop, its release sends this with `release`: parted
+    /// by a hold, the windows come back; by a quick tap, they stay parted.
     #[cfg_attr(
         feature = "clap",
         clap(about = "Show the desktop (windows part to the sides)")
@@ -834,6 +865,10 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         output: Option<String>,
+        /// The key that parted them is let go: back if it was held.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        release: bool,
     },
     /// Snap a floating window to a part of its output's working area, or back (angel-niri).
     ///
