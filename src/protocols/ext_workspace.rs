@@ -256,10 +256,11 @@ fn remove_workspace_instances(
     }
 }
 
-fn build_name(ws: &Workspace<Mapped>, ws_idx: usize) -> String {
+fn build_name(ws: &Workspace<Mapped>, ws_idx: usize, base: usize) -> String {
     ws.name().cloned().unwrap_or_else(|| {
-        // Add 1 since this is a human-readable name, and our action indexing is 1-based.
-        (ws_idx + 1).to_string()
+        // Add 1 since this is a human-readable name, and our action indexing is 1-based
+        // (angel-niri: 0 for the clean desk on top, desk_zero.rs).
+        (ws_idx + base).to_string()
     })
 }
 
@@ -319,7 +320,7 @@ fn refresh_workspace(
                 };
             let mut name_changed = false;
             if check {
-                let new_name = build_name(ws, ws_idx);
+                let new_name = build_name(ws, ws_idx, mon.map_or(1, |mon| mon.desk_base()));
                 // This will likely be true, except if the workspace got named its index.
                 if data.name != new_name {
                     data.name = new_name;
@@ -384,7 +385,7 @@ fn refresh_workspace(
             // New workspace, start tracking it.
             let mut data = ExtWorkspaceData {
                 id: ws.name().cloned(),
-                name: build_name(ws, ws_idx),
+                name: build_name(ws, ws_idx, mon.map_or(1, |mon| mon.desk_base())),
                 coordinates: ArrayVec::from([0, ws_idx as u32]),
                 state,
                 instances: Vec::new(),

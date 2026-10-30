@@ -16,6 +16,7 @@ pub mod dbus;
 pub mod desk_flags;
 pub mod desk_peek;
 pub mod desk_throw;
+pub mod desk_zero;
 pub mod frame_clock;
 pub mod game;
 pub mod handlers;

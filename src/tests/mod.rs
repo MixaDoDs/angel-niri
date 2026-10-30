@@ -7,6 +7,7 @@ mod test_input_backend;
 
 mod animations;
 mod binds;
+mod desk_zero;
 mod floating;
 mod fullscreen;
 mod game;

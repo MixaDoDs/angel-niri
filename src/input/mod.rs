@@ -1221,6 +1221,13 @@ impl State {
             Action::SetMinimizeOnCopy(on) => {
                 crate::minimize::set_on_copy(on);
             }
+            Action::SetDeskZero(on) => {
+                crate::desk_zero::set(on);
+                let config = self.niri.config.clone();
+                self.niri.layout.update_config(&config.borrow());
+                // FIXME: granular
+                self.niri.queue_redraw_all();
+            }
             Action::SetDeskThrow(on, strength) => {
                 crate::desk_throw::set(on);
                 crate::desk_throw::set_strength(strength);
@@ -2056,14 +2063,23 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::MoveWorkspaceToIndex(new_idx) => {
-                let new_idx = new_idx.saturating_sub(1);
+                let new_idx = self
+                    .niri
+                    .layout
+                    .active_monitor_ref()
+                    .map_or(new_idx.saturating_sub(1), |mon| mon.desk_pos(new_idx));
                 self.niri.layout.move_workspace_to_idx(None, new_idx);
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
             Action::MoveWorkspaceToIndexByRef { new_idx, reference } => {
                 if let Some(res) = self.niri.find_output_and_workspace_index(reference) {
-                    let new_idx = new_idx.saturating_sub(1);
+                    let mon = match &res.0 {
+                        Some(output) => self.niri.layout.monitor_for_output(output),
+                        None => self.niri.layout.active_monitor_ref(),
+                    };
+                    let new_idx =
+                        mon.map_or(new_idx.saturating_sub(1), |mon| mon.desk_pos(new_idx));
                     self.niri.layout.move_workspace_to_idx(Some(res), new_idx);
                     // FIXME: granular
                     self.niri.queue_redraw_all();

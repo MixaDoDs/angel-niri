@@ -657,7 +657,8 @@ impl State {
 
             // Check for any changes that we can't signal as individual events.
             let output_name = mon.map(|mon| mon.output_name());
-            if ipc_ws.idx != u8::try_from(ws_idx + 1).unwrap_or(u8::MAX)
+            let number = ws_idx + mon.map_or(1, |mon| mon.desk_base());
+            if ipc_ws.idx != u8::try_from(number).unwrap_or(u8::MAX)
                 || ipc_ws.name.as_ref() != ws.name()
                 || ipc_ws.output.as_ref() != output_name
             {
@@ -708,7 +709,8 @@ impl State {
                     let id = ws.id().get();
                     Workspace {
                         id,
-                        idx: u8::try_from(ws_idx + 1).unwrap_or(u8::MAX),
+                        idx: u8::try_from(ws_idx + mon.map_or(1, |mon| mon.desk_base()))
+                            .unwrap_or(u8::MAX),
                         name: ws.name().cloned(),
                         output: mon.map(|mon| mon.output_name().clone()),
                         is_urgent: ws.is_urgent(),

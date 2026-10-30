@@ -27,7 +27,7 @@ pub struct Spot {
     pub output: String,
     #[serde(default)]
     pub workspace: Option<String>,
-    /// Its index on the output, from 0.
+    /// Its number on the output less 1 (desk 1 is 0).
     #[serde(default)]
     pub workspace_idx: usize,
     #[serde(default)]
@@ -144,7 +144,8 @@ pub fn apply(
         }
         return None;
     }
+    // the desk numbered workspace_idx + 1, after the clean desk 0 if one is kept (desk_zero.rs)
     on_output
-        .find(|(_, idx, _)| *idx == spot.workspace_idx)
+        .find(|(mon, idx, _)| *idx + mon.map_or(1, |mon| mon.desk_base()) == spot.workspace_idx + 1)
         .map(|(_, _, ws)| ws.id())
 }

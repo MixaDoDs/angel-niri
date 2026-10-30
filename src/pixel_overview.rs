@@ -123,7 +123,12 @@ pub fn render<R: NiriRenderer, W: LayoutElement>(
             }
 
             // its name
-            let text = ws.name().cloned().unwrap_or_else(|| (idx + 1).to_string());
+            // the clean desk 0 (desk_zero.rs) is the "+" of the shell's panel
+            let base = mon.desk_base();
+            let text = ws.name().cloned().unwrap_or_else(|| match idx + base {
+                0 => "+".to_owned(),
+                number => number.to_string(),
+            });
             let rgba = color.to_array_unpremul().map(|c| (c * 255.).round() as u8);
             let label = cache
                 .labels

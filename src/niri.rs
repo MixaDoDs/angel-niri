@@ -4037,7 +4037,13 @@ impl Niri {
     ) -> Option<(Option<Output>, usize)> {
         let (target_workspace_index, target_workspace) = match workspace_reference {
             WorkspaceReference::Index(index) => {
-                return Some((None, index.saturating_sub(1) as usize));
+                let pos = self
+                    .layout
+                    .active_monitor_ref()
+                    .map_or(index.saturating_sub(1) as usize, |mon| {
+                        mon.desk_pos(usize::from(index))
+                    });
+                return Some((None, pos));
             }
             WorkspaceReference::Name(name) => self.layout.find_workspace_by_name(&name)?,
             WorkspaceReference::Id(id) => {

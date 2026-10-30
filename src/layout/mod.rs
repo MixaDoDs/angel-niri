@@ -862,8 +862,11 @@ impl HitType {
 
 impl Options {
     fn from_config(config: &Config) -> Self {
+        let mut layout = config.layout.clone();
+        // angel-niri (desk_zero.rs)
+        layout.empty_workspace_above_first |= crate::desk_zero::on();
         Self {
-            layout: config.layout.clone(),
+            layout,
             animations: config.animations.clone(),
             gestures: config.gestures,
             overview: config.overview,
@@ -1595,7 +1598,7 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<&mut Workspace<W>> {
         if let WorkspaceReference::Index(index) = reference {
             self.active_monitor().and_then(|m| {
-                let index = index.saturating_sub(1) as usize;
+                let index = m.desk_pos(usize::from(index));
                 m.workspaces.get_mut(index)
             })
         } else {
@@ -5762,10 +5765,12 @@ impl<W: LayoutElement> Layout<W> {
             let focus = mon.workspaces[shown]
                 .active_window()
                 .map(|win| win.id().clone());
-            let into = mon.workspaces[0].id();
+            // desk 1: after the clean desk 0 (desk_zero.rs)
+            let first = 1 - mon.desk_base();
+            let into = mon.workspaces[first].id();
             // (window, far): from the next desk first, the hard hits last
             let mut thrown: Vec<(W::Id, bool)> = Vec::new();
-            for idx in 1..mon.workspaces.len() {
+            for idx in first + 1..mon.workspaces.len() {
                 let ws = &mut mon.workspaces[idx];
                 if ws.name().is_some() {
                     continue;
@@ -5784,7 +5789,7 @@ impl<W: LayoutElement> Layout<W> {
                     .collect();
                 let id = ws.id();
                 for removed in tiles {
-                    mon.workspaces[0].add_tile(
+                    mon.workspaces[first].add_tile(
                         removed.tile,
                         WorkspaceAddWindowTarget::Auto,
                         ActivateWindow::No,
@@ -5794,7 +5799,7 @@ impl<W: LayoutElement> Layout<W> {
                         None,
                     );
                 }
-                thrown.extend(windows.iter().map(|win| (win.clone(), idx >= 2)));
+                thrown.extend(windows.iter().map(|win| (win.clone(), idx >= first + 2)));
                 self.desk_gathered.push(GatheredDesk {
                     output: mon.output_name().clone(),
                     idx,
@@ -5808,12 +5813,18 @@ impl<W: LayoutElement> Layout<W> {
                 thrown.sort_by_key(|(_, far)| *far);
                 let output = mon.output_name().clone();
                 let view = mon.view_size();
-                let (hits, _) =
-                    throw_tiles(&mut mon.workspaces[0], &thrown, false, view, now, &output);
+                let (hits, _) = throw_tiles(
+                    &mut mon.workspaces[first],
+                    &thrown,
+                    false,
+                    view,
+                    now,
+                    &output,
+                );
                 self.desk_throws.extend(hits);
             }
-            if shown != 0 {
-                mon.switch_workspace(0);
+            if shown != first {
+                mon.switch_workspace(first);
             }
             // the emptied ones go at once (else once the switch ends): one desk, as every entry
             if mon.workspace_switch.is_none() {
@@ -5821,7 +5832,7 @@ impl<W: LayoutElement> Layout<W> {
             }
             // the window in front stays in front
             if let Some(focus) = focus {
-                mon.workspaces[0].activate_window(&focus);
+                mon.workspaces[first].activate_window(&focus);
             }
         }
     }

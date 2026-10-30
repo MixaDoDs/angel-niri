@@ -120,13 +120,14 @@ impl Niri {
         let ws_id = self.layout.active_workspace().map(|ws| ws.id());
         if let Some(ws_id) = ws_id {
             if self.a11y.workspace_id != Some(ws_id) {
-                let (_, idx, ws) = self
+                let (mon, idx, ws) = self
                     .layout
                     .workspaces()
                     .find(|(_, _, ws)| ws.id() == ws_id)
                     .unwrap();
 
-                let mut buf = format!("Workspace {}", idx + 1);
+                let number = idx + mon.map_or(1, |mon| mon.desk_base());
+                let mut buf = format!("Workspace {number}");
                 if let Some(name) = ws.name() {
                     buf.push(' ');
                     buf.push_str(name);

@@ -958,6 +958,24 @@ impl<W: LayoutElement> Monitor<W> {
             && !self.workspaces[idx].has_windows_or_name()
     }
 
+    /// angel-niri (desk_zero.rs): the number of the first workspace: 0 when it is the clean desk
+    /// kept above the others, else 1.
+    pub fn desk_base(&self) -> usize {
+        if crate::desk_zero::on()
+            && self.options.layout.empty_workspace_above_first
+            && self.workspaces.len() > 1
+        {
+            0
+        } else {
+            1
+        }
+    }
+
+    /// angel-niri (desk_zero.rs): where the workspace numbered `number` is.
+    pub fn desk_pos(&self, number: usize) -> usize {
+        number.saturating_sub(self.desk_base())
+    }
+
     /// angel-niri (stacking.rs): the last workspace a switch or a move may reach.
     pub fn last_reachable_workspace(&self) -> usize {
         let last = self.workspaces.len() - 1;

@@ -403,6 +403,21 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
+    /// Keep a clean desk above the first one, numbered 0 (angel-niri).
+    ///
+    /// On, every monitor keeps an empty workspace above its first one; a window put there makes
+    /// it desk 1 and a new empty one comes above. Workspace indices count the empty top one as 0,
+    /// so the desks with windows keep their numbers 1…N.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Keep a clean desk above the first one, numbered 0")
+    )]
+    SetDeskZero {
+        /// Keep it (`true`, the default) or not.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        on: bool,
+    },
     /// Let Alt+wheel over a window make it see-through in dots (angel-niri).
     ///
     /// On, the wheel turned down over a window with only Alt held draws less of it — a pixel
