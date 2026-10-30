@@ -264,7 +264,9 @@ impl MoveGrab {
     }
 
     fn on_toggle_floating(&mut self, data: &mut State) -> bool {
-        if self.gesture == GestureState::ViewOffset {
+        // angel-niri (stacking.rs): while stacking every window floats; the other button does
+        // nothing and the window keeps following the pointer.
+        if self.gesture == GestureState::ViewOffset || crate::stacking::on() {
             return true;
         }
 
