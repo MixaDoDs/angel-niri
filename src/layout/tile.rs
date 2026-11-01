@@ -1659,6 +1659,7 @@ impl<W: LayoutElement> Tile<W> {
                 self.title_extras(),
                 color,
                 crate::stacking::notch_over_bar(location, width),
+                self.window.geometry_corner_radius().top_left,
             );
             if let Some(buffer) = buffer {
                 let elem = TextureRenderElement::from_texture_buffer(

@@ -254,6 +254,9 @@ struct Look {
     color: [u8; 4],
     font: String,
     corners: u32,
+    /// The window's own top corner radius in logical px (its geometry-corner-radius), as bits:
+    /// the Mac look rounds the bar's top corners with it.
+    radius: u32,
     icon: bool,
     mac: bool,
     light: bool,
@@ -293,6 +296,7 @@ impl TitleBar {
         extras: Extras,
         color: Color,
         notch: Option<(f64, f64)>,
+        radius: f32,
     ) -> Option<TextureBuffer<GlesTexture>> {
         let icon_path = icon_path(app_id);
         let retry = self
@@ -319,6 +323,7 @@ impl TitleBar {
             color: color.to_array_unpremul().map(|c| (c * 255.).round() as u8),
             font: FONT.with(|font| font.borrow().clone()),
             corners: crate::pixel_corners::pixel().to_bits(),
+            radius: radius.to_bits(),
             icon,
             mac: mac(),
             light: light(),
@@ -381,17 +386,6 @@ fn ink(bg: [f64; 3]) -> [f64; 3] {
 
 const WHITE: [f64; 3] = [1., 1., 1.];
 const BLACK: [f64; 3] = [0., 0., 0.];
-
-/// A round button, six by six art pixels.
-const LIGHT: [&str; 6] = ["..##..", ".####.", "######", "######", ".####.", "..##.."];
-
-/// The glyphs on the buttons while the pointer is over them, four by four art pixels in the
-/// middle of each: close (×), minimize (–), maximize (+), all centred.
-const GLYPHS: [[&str; 4]; 3] = [
-    ["#..#", ".##.", ".##.", "#..#"],
-    ["....", "####", "####", "...."],
-    [".##.", "####", "####", ".##."],
-];
 
 /// The pixel skins' glyphs, seven by seven art pixels in the text's colour over a shadow: minimize
 /// (_), maximize (□), close (×), as Windows 11 draws them.
@@ -465,7 +459,14 @@ fn draw(
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
     let cr = cairo::Context::new(&surface)?;
-    cr.set_antialias(cairo::Antialias::None);
+    // the pixel skins on the art-pixel grid, hard; the Mac look smooth, as macOS draws it (its
+    // lights were pixel discs, its title unsmoothed: Golden Gate's GTK apps beside them have round
+    // ones)
+    cr.set_antialias(if look.mac {
+        cairo::Antialias::Best
+    } else {
+        cairo::Antialias::None
+    });
     let rect = |cr: &cairo::Context, c: [f64; 3], x: f64, y: f64, w: f64, h: f64| {
         cr.set_source_rgb(c[0], c[1], c[2]);
         cr.rectangle(x, y, w, h);
@@ -483,8 +484,9 @@ fn draw(
 
     rect(&cr, bg, 0., 0., f64::from(width), f64::from(height));
     if let Some(line) = line {
-        // a one art pixel line under the bar
-        rect(&cr, line, 0., f64::from(height) - ap, f64::from(width), ap);
+        // a hairline under the bar (the pixel skins' would be one art pixel)
+        let thick = scale.round().max(1.);
+        rect(&cr, line, 0., f64::from(height) - thick, f64::from(width), thick);
     } else if look.shaded {
         // rolled up: the bar's own bottom edge, so it does not read as part of the window behind
         rect(
@@ -562,17 +564,74 @@ fn draw(
             sprite(&cr, ink, gx, gy, glyph);
             continue;
         }
-        let (light, glyph) = (&lights[i], GLYPHS[i]);
-        sprite(&cr, *light, x, y, &LIGHT);
+        // the Mac look's light: a disc with a thin darker rim, the glyph drawn in lines under the
+        // pointer (× close, − minimize, + maximize), all smooth and centred in the button
+        let light = &lights[i];
+        let (cx, cy) = (
+            (button.loc.x + button.size.w / 2.) * scale,
+            (button.loc.y + button.size.h / 2.) * scale,
+        );
+        let r = button.size.w / 2. * scale;
+        cr.new_path();
+        cr.arc(cx, cy, r, 0., std::f64::consts::TAU);
+        cr.set_source_rgb(light[0], light[1], light[2]);
+        let _ = cr.fill_preserve();
+        let rim = mix(*light, BLACK, 0.18);
+        cr.set_source_rgb(rim[0], rim[1], rim[2]);
+        cr.set_line_width((0.5 * scale).max(1.));
+        let _ = cr.stroke();
         if look.hover.is_some() {
-            sprite(&cr, mix(*light, ink(*light), 0.75), x + ap, y + ap, &glyph);
+            let g = mix(*light, ink(*light), 0.75);
+            let d = r * 0.42;
+            cr.set_source_rgb(g[0], g[1], g[2]);
+            cr.set_line_width((r * 0.22).max(1.));
+            cr.set_line_cap(cairo::LineCap::Round);
+            match part {
+                FramePart::Close => {
+                    cr.move_to(cx - d, cy - d);
+                    cr.line_to(cx + d, cy + d);
+                    cr.move_to(cx + d, cy - d);
+                    cr.line_to(cx - d, cy + d);
+                }
+                FramePart::Minimize => {
+                    cr.move_to(cx - d, cy);
+                    cr.line_to(cx + d, cy);
+                }
+                _ => {
+                    cr.move_to(cx - d, cy);
+                    cr.line_to(cx + d, cy);
+                    cr.move_to(cx, cy - d);
+                    cr.line_to(cx, cy + d);
+                }
+            }
+            let _ = cr.stroke();
         }
     }
 
     // the top corners cut in steps like a pixel window's (Settings → Windows → Corners), over the
     // buttons' plates
+    // the Mac look: the window's own radius, round, as its body's would be without the bar
+    let mac_radius = f64::from(f32::from_bits(look.radius)) * scale;
+    if look.mac && mac_radius > 0. {
+        let (w, h) = (f64::from(width), f64::from(height));
+        let r = mac_radius.min(w / 2.).min(h);
+        cr.set_operator(cairo::Operator::Clear);
+        cr.set_fill_rule(cairo::FillRule::EvenOdd);
+        cr.new_path();
+        cr.rectangle(0., 0., w, h);
+        cr.move_to(0., h);
+        cr.line_to(0., r);
+        cr.arc(r, r, r, std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+        cr.line_to(w - r, 0.);
+        cr.arc(w - r, r, r, 1.5 * std::f64::consts::PI, std::f64::consts::TAU);
+        cr.line_to(w, h);
+        cr.close_path();
+        let _ = cr.fill();
+        cr.set_fill_rule(cairo::FillRule::Winding);
+        cr.set_operator(cairo::Operator::Over);
+    }
     let corner = f64::from(f32::from_bits(look.corners)) * scale;
-    if corner > 0. {
+    if corner > 0. && !look.mac {
         let step = corner.round().max(1.);
         cr.set_operator(cairo::Operator::Clear);
         for i in 0..2 {
@@ -614,8 +673,13 @@ fn draw(
     let mut font = FontDescription::from_string(font);
     font.set_absolute_size((font.size() as f64 * scale).round());
     let mut options = cairo::FontOptions::new()?;
-    options.set_antialias(cairo::Antialias::None);
-    options.set_hint_style(cairo::HintStyle::None);
+    if look.mac {
+        options.set_antialias(cairo::Antialias::Gray);
+        options.set_hint_style(cairo::HintStyle::Slight);
+    } else {
+        options.set_antialias(cairo::Antialias::None);
+        options.set_hint_style(cairo::HintStyle::None);
+    }
     let layout = pangocairo::functions::create_layout(&cr);
     pangocairo::functions::context_set_font_options(&layout.context(), Some(&options));
     layout.set_font_description(Some(&font));
