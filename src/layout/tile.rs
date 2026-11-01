@@ -1166,11 +1166,17 @@ impl<W: LayoutElement> Tile<W> {
 
     /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
     /// angel-niri (stacking_title.rs): whether the tile shows a title bar: floating while
-    /// stacking, its window leaving the decorations to the compositor.
+    /// stacking, its window leaving the decorations to the compositor, not fullscreen. Maximized
+    /// it keeps the bar (its lights the only way back for an app without its own: the green one
+    /// maximized and the bar went with it, nothing left to restore or minimize it by).
     pub fn is_titled(&self) -> bool {
+        self.titled_when(self.sizing_mode)
+    }
+
+    fn titled_when(&self, mode: SizingMode) -> bool {
         self.in_floating
             && crate::stacking::on()
-            && self.sizing_mode.is_normal()
+            && !mode.is_fullscreen()
             && self.window.has_ssd()
     }
 
@@ -1510,6 +1516,11 @@ impl<W: LayoutElement> Tile<W> {
         animate: bool,
         transaction: Option<Transaction>,
     ) {
+        // angel-niri: the area holds the title bar too, the window gets the rest under it
+        let mut size = size;
+        if self.titled_when(SizingMode::Maximized) {
+            size.h = f64::max(1., size.h - TITLE_HEIGHT);
+        }
         self.window.request_size(
             size.to_i32_round(),
             SizingMode::Maximized,
