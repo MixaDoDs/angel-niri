@@ -1164,7 +1164,6 @@ impl<W: LayoutElement> Tile<W> {
         }
     }
 
-    /// Returns `None` if the border is hidden and `Some(width)` if it should be shown.
     /// angel-niri (stacking_title.rs): whether the tile shows a title bar: floating while
     /// stacking, its window leaving the decorations to the compositor, not fullscreen. Maximized
     /// it keeps the bar (its lights the only way back for an app without its own: the green one

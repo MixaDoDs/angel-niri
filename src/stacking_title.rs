@@ -18,8 +18,10 @@
 //! A window kept on top or on every workspace (desk_flags.rs) shows a small pixel badge for it on
 //! the right — a pin, two desks — and a click on the badge clears that flag.
 //!
-//! The Mac look (`--title-style mac`, Golden Gate) has the same buttons in Mac colours on a light
-//! grey bar, the title without an icon.
+//! The Mac look (`--title-style mac`, Golden Gate) is drawn smooth, not on the art-pixel grid:
+//! round lights with a thin darker rim (the glyphs × − + as lines under the pointer), the title
+//! antialiased, the top corners rounded by the window's own corner radius, a hairline under the
+//! bar; Mac colours on a light grey bar, the title without an icon.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;

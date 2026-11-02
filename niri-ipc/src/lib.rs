@@ -517,8 +517,8 @@ pub enum Action {
     /// On, every column floats where it is on screen and new windows open floating; off, the
     /// columns come back as they were (order, width, workspace) and the windows opened meanwhile
     /// join them at the end. Windows that floated before stay floating. While on, floating windows
-    /// that leave their decorations to the compositor get pixel title bars, snap to the edges when
-    /// dragged there, and Mod+arrows snap the focused one.
+    /// that leave their decorations to the compositor get title bars (pixel ones, or smooth in the
+    /// Mac look), snap to the edges when dragged there, and Mod+arrows snap the focused one.
     #[cfg_attr(feature = "clap", clap(about = "Turn the stacking mode on or off"))]
     SetStackingMode {
         /// On (`true`, the default) or off.
@@ -532,7 +532,8 @@ pub enum Action {
         title_font: Option<String>,
         /// Look of the title bars: `win98` (the pixel bars: three round buttons on the left, the
         /// icon and title in the middle), `light` (the same for a light theme: the inactive bars
-        /// pale) or `mac` (Mac colours on a light grey bar). Kept as it was if not given.
+        /// pale) or `mac` (Mac colours on a light grey bar, drawn smooth: round lights, round top
+        /// corners). Kept as it was if not given.
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         title_style: Option<String>,
@@ -542,7 +543,8 @@ pub enum Action {
         #[serde(default)]
         title_buttons: Option<String>,
         /// What the green button does: `maximize` or `fullscreen` (onto a workspace of its own,
-        /// like a Mac). Kept as it was if not given.
+        /// like a Mac). A maximized window keeps its title bar, a fullscreen one drops it. Kept as
+        /// it was if not given.
         #[cfg_attr(feature = "clap", arg(long))]
         #[serde(default)]
         green: Option<String>,
