@@ -5566,7 +5566,7 @@ impl Niri {
                 &self.display_handle,
                 import_device,
             ));
-            debug!("exposing DRM syncobj protocol");
+            info!("exposing DRM syncobj protocol (explicit sync)");
         }
     }
 

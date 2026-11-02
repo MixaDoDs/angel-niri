@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context as _;
 use niri_config::{Config, OutputName};
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::drm::DrmNode;
+use smithay::backend::drm::{DrmDeviceFd, DrmNode};
 use smithay::backend::egl::EGLDevice;
 use smithay::backend::input::InputTime;
 use smithay::backend::renderer::damage::OutputDamageTracker;
@@ -21,6 +21,7 @@ use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_pre
 use smithay::reexports::winit::dpi::LogicalSize;
 use smithay::reexports::winit::platform::wayland::WindowAttributesWayland;
 use smithay::reexports::winit::window::WindowAttributes;
+use smithay::utils::DeviceFd;
 use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal};
 use smithay::wayland::presentation::Refresh;
 
@@ -226,6 +227,16 @@ impl Winit {
 
         self.create_dmabuf_global(niri);
 
+        // angel-niri: explicit sync nested too, so the stand runs the same buffer path as a session
+        if let Some(path) = self.render_node.as_ref().and_then(|node| node.dev_path()) {
+            match std::fs::File::options().read(true).write(true).open(&path) {
+                Ok(file) => niri.update_drm_syncobj_state(DrmDeviceFd::new(DeviceFd::from(
+                    std::os::fd::OwnedFd::from(file),
+                ))),
+                Err(err) => debug!("couldn't open {path:?} for DRM syncobj: {err:?}"),
+            }
+        }
+
         #[cfg(feature = "xdp-gnome-screencast")]
         if let Err(err) = self.create_gbm_device() {
             debug!("couldn't create GBM device for screencasting: {err:?}");
@@ -277,7 +288,6 @@ impl Winit {
         use std::os::fd::OwnedFd;
 
         use smithay::backend::allocator::gbm::GbmDevice;
-        use smithay::utils::DeviceFd;
 
         let node = self
             .render_node
