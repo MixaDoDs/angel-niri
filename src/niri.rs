@@ -579,6 +579,8 @@ pub struct OutputState {
     /// next one is put off.
     pub last_redraw_at: Option<Duration>,
     pub background_until: Option<Duration>,
+    /// angel-niri (latency.rs): composing as late as the VBlank allows.
+    pub late: crate::latency::Late,
 }
 
 #[derive(Debug, Default)]
@@ -3331,6 +3333,7 @@ impl Niri {
             debug_damage_tracker: OutputDamageTracker::from_output(&output),
             last_redraw_at: None,
             background_until: None,
+            late: Default::default(),
         };
         let rv = self.output_state.insert(output.clone(), state);
         assert!(rv.is_none(), "output was already tracked");
@@ -4138,7 +4141,9 @@ impl Niri {
     pub fn redraw_queued_outputs(&mut self, backend: &mut Backend) {
         let _span = tracy_client::span!("Niri::redraw_queued_outputs");
 
-        // (angel-niri: a background output put off by game.rs waits for its timer)
+        // (angel-niri: a background output put off by game.rs waits for its timer, and so does one
+        // composing late, latency.rs)
+        let tty = matches!(backend, Backend::Tty(_));
         let mut waiting = Vec::new();
         while let Some((output, _)) = self.output_state.iter().find(|(output, state)| {
             matches!(
@@ -4147,7 +4152,7 @@ impl Niri {
             ) && !waiting.contains(*output)
         }) {
             let output = output.clone();
-            if self.background_wait(&output) {
+            if self.background_wait(&output) || self.compose_wait(tty, &output) {
                 waiting.push(output);
                 continue;
             }
@@ -5191,7 +5196,8 @@ impl Niri {
         ));
 
         let target_presentation_time = state.frame_clock.next_presentation_time();
-        state.last_redraw_at = Some(get_monotonic_time());
+        let started = get_monotonic_time();
+        state.last_redraw_at = Some(started);
 
         // Freeze the clock at the target time.
         self.clock.set_unadjusted(target_presentation_time);
@@ -5230,6 +5236,7 @@ impl Niri {
 
             // Render.
             res = backend.render(self, output, target_presentation_time);
+            self.composed(output, res == RenderResult::Submitted, started);
         }
 
         let is_locked = self.is_locked();

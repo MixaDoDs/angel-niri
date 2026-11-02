@@ -1218,6 +1218,9 @@ impl State {
             Action::SetMinimizeOnCopy(on) => {
                 crate::minimize::set_on_copy(on);
             }
+            Action::SetLateCompose(on) => {
+                crate::latency::set_late_compose(on);
+            }
             Action::SetDeskZero(on) => {
                 crate::desk_zero::set(on);
                 let config = self.niri.config.clone();

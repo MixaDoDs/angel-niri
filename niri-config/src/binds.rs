@@ -301,6 +301,8 @@ pub enum Action {
     #[knuffel(skip)]
     SetMinimizeOnCopy(bool),
     #[knuffel(skip)]
+    SetLateCompose(bool),
+    #[knuffel(skip)]
     SetDeskZero(bool),
     #[knuffel(skip)]
     SetDeskThrow(bool, u8),
@@ -680,6 +682,7 @@ impl From<niri_ipc::Action> for Action {
             ),
             niri_ipc::Action::SetMinimizeFade { on } => Self::SetMinimizeFade(on),
             niri_ipc::Action::SetMinimizeOnCopy { on } => Self::SetMinimizeOnCopy(on),
+            niri_ipc::Action::SetLateCompose { on } => Self::SetLateCompose(on),
             niri_ipc::Action::SetDeskZero { on } => Self::SetDeskZero(on),
             niri_ipc::Action::SetDeskThrow { on, strength } => Self::SetDeskThrow(on, strength),
             niri_ipc::Action::SnapshotWindow { id, path } => Self::SnapshotWindow(id, path),

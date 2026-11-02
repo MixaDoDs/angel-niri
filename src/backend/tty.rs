@@ -1817,8 +1817,10 @@ impl Tty {
         output_state.last_drm_sequence = Some(meta.sequence);
 
         output_state.frame_clock.presented(presentation_time);
+        let redraw_needed = redraw_needed || output_state.unfinished_animations_remain;
+        niri.compose_presented(&output, presentation_time);
 
-        if redraw_needed || output_state.unfinished_animations_remain {
+        if redraw_needed {
             let vblank_frame = tracy_client::Client::running()
                 .unwrap()
                 .non_continuous_frame(surface.vblank_frame_name);
