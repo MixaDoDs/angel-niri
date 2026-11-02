@@ -14,6 +14,7 @@ use _server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as 
 use anyhow::{bail, ensure, Context};
 use calloop::futures::Scheduler;
 use niri_config::debug::PreviewRender;
+use niri_config::input::XkbFile;
 use niri_config::output::MaxBpc;
 use niri_config::window_rule::VrrRule;
 use niri_config::{
@@ -131,7 +132,7 @@ use crate::dbus::freedesktop_locale1::Locale1ToNiri;
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_login1::Login1ToNiri;
 #[cfg(feature = "dbus")]
-use crate::dbus::gnome_shell::{GlobalShortcuts, ShellToNiri};
+use crate::dbus::gnome_shell::{GlobalShortcutsPortalBinds, ShellToNiri};
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
 #[cfg(feature = "dbus")]
@@ -192,8 +193,8 @@ use crate::utils::vblank_throttle::VBlankThrottle;
 use crate::utils::watcher::Watcher;
 use crate::utils::xwayland::satellite::Satellite;
 use crate::utils::{
-    center, center_f64, expand_home, get_monotonic_time, ipc_transform_to_smithay, is_mapped,
-    logical_output, make_screenshot_path, output_matches_name, output_size, panel_orientation,
+    center, center_f64, get_monotonic_time, ipc_transform_to_smithay, is_mapped, logical_output,
+    make_screenshot_path, output_matches_name, output_size, panel_orientation,
     send_scale_transform, winit_scale, write_png_rgba8, xwayland,
 };
 use crate::window::mapped::{MappedId, WindowCastRenderElements};
@@ -465,7 +466,7 @@ pub struct Niri {
     pub hotkey_overlay: HotkeyOverlay,
     pub exit_confirm_dialog: ExitConfirmDialog,
     #[cfg(feature = "dbus")]
-    pub global_shortcuts: GlobalShortcuts,
+    pub global_shortcuts_portal_binds: GlobalShortcutsPortalBinds,
 
     pub window_mru_ui: WindowMruUi,
     pub pending_mru_commit: Option<PendingMruCommit>,
@@ -1592,14 +1593,7 @@ impl State {
     }
 
     /// Loads the xkb keymap from a file config setting.
-    fn set_xkb_file(&mut self, xkb_file: String) -> anyhow::Result<()> {
-        let xkb_file = PathBuf::from(xkb_file);
-        let xkb_file = expand_home(&xkb_file)
-            .context("failed to expand ~")?
-            .unwrap_or(xkb_file);
-
-        let keymap = std::fs::read_to_string(xkb_file).context("failed to read xkb_file")?;
-
+    fn set_xkb_file_content(&mut self, keymap: String) -> anyhow::Result<()> {
         let keyboard = self.niri.seat.get_keyboard().unwrap();
         let restore = self.keyboard_state_to_restore();
 
@@ -1615,8 +1609,8 @@ impl State {
 
     fn load_xkb_file(&mut self) {
         let xkb_file = self.niri.config.borrow().input.keyboard.xkb.file.clone();
-        if let Some(xkb_file) = xkb_file {
-            if let Err(err) = self.set_xkb_file(xkb_file) {
+        if let Some(XkbFile(Some(keymap))) = xkb_file {
+            if let Err(err) = self.set_xkb_file_content(keymap) {
                 warn!("error loading xkb_file: {err:?}");
             }
         }
@@ -1723,8 +1717,8 @@ impl State {
         let mut xkb = self.niri.config.borrow().input.keyboard.xkb.clone();
         let mut set_xkb_config = true;
 
-        if let Some(xkb_file) = xkb.file.take() {
-            if let Err(err) = self.set_xkb_file(xkb_file) {
+        if let Some(XkbFile(Some(keymap))) = xkb.file.take() {
+            if let Err(err) = self.set_xkb_file_content(keymap) {
                 warn!("error loading xkb_file: {err:?}");
             } else {
                 set_xkb_config = false;
@@ -1809,6 +1803,11 @@ impl State {
                 .cursor_manager
                 .reload(&config.cursor.xcursor_theme, config.cursor.xcursor_size);
             self.niri.cursor_texture_cache.clear();
+        }
+
+        if config.debug.nested_show_host_cursor != old_config.debug.nested_show_host_cursor {
+            self.backend
+                .set_host_cursor_visible(config.debug.nested_show_host_cursor);
         }
 
         // We need &mut self to reload the xkb config, so just store it here.
@@ -2482,9 +2481,11 @@ impl State {
                 accelerators,
                 results: tx,
             } => {
-                let grabs = accelerators;
-                debug!("requesting grab global shortcut accelerators: {grabs:?}");
-                let results = self.niri.global_shortcuts.grab_accelerators(&grabs);
+                debug!("requesting grab global shortcut accelerators: {accelerators:?}");
+                let results = self
+                    .niri
+                    .global_shortcuts_portal_binds
+                    .grab_accelerators(&accelerators);
 
                 debug!("returning actions: {results:?}");
                 if let Err(err) = tx.send_blocking(results) {
@@ -2495,9 +2496,11 @@ impl State {
                 actions,
                 result: tx,
             } => {
-                let actions = actions;
                 debug!("requesting ungrab global shortcut accelerators: {actions:?}",);
-                let result = self.niri.global_shortcuts.ungrab_accelerators(&actions);
+                let result = self
+                    .niri
+                    .global_shortcuts_portal_binds
+                    .ungrab_accelerators(&actions);
 
                 debug!("returning result: {result:?}");
                 if let Err(err) = tx.send_blocking(result) {
@@ -2829,7 +2832,7 @@ impl Niri {
         let exit_confirm_dialog = ExitConfirmDialog::new(animation_clock.clone(), config.clone());
 
         #[cfg(feature = "dbus")]
-        let global_shortcuts = GlobalShortcuts::new();
+        let global_shortcuts = GlobalShortcutsPortalBinds::new();
 
         #[cfg(feature = "dbus")]
         let a11y = A11y::new(event_loop.clone());
@@ -3035,7 +3038,7 @@ impl Niri {
             hotkey_overlay,
             exit_confirm_dialog,
             #[cfg(feature = "dbus")]
-            global_shortcuts,
+            global_shortcuts_portal_binds: global_shortcuts,
 
             window_mru_ui,
             pending_mru_commit: None,

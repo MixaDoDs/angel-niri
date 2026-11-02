@@ -1,8 +1,11 @@
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use niri_config::{Action, Bind, BoundAction, Key};
 use serde::Deserialize;
+use smithay::backend::input::InputTime;
+use smithay::wayland::xdg_activation::XdgActivationState;
 use zbus::blocking::object_server::InterfaceRef;
 use zbus::fdo::{self};
 use zbus::interface;
@@ -19,12 +22,12 @@ pub type ActionId = u32;
 const INVALID_ACTION: ActionId = u32::MAX;
 
 #[derive(Clone)]
-pub struct GlobalShortcuts {
+pub struct GlobalShortcutsPortalBinds {
     next_action: ActionId,
     binds: Vec<Bind>,
 }
 
-impl GlobalShortcuts {
+impl GlobalShortcutsPortalBinds {
     /// Creates a new instance of these shortcuts.
     pub fn new() -> Self {
         Self {
@@ -47,7 +50,7 @@ impl GlobalShortcuts {
     pub fn ungrab_accelerators(&mut self, actions: &[ActionId]) -> bool {
         let mut unbound = false;
         for action in actions {
-            unbound = self.unbind_action(*action) || unbound;
+            unbound |= self.unbind_action(*action);
         }
         unbound
     }
@@ -61,12 +64,30 @@ impl GlobalShortcuts {
     ///
     /// This function may return [`INVALID_ACTION`] and **not** actually bind the accelerator.
     fn bind_accelerator(&mut self, accelerator: &AcceleratorGrab) -> ActionId {
-        let Ok(key) = Key::from_str(&accelerator.accelerator) else {
+        let converted_accelerator = match convert_gnome_modifiers(&accelerator.accelerator) {
+            Ok(converted) => converted,
+            Err(bad_modifier) => {
+                warn!(
+                    "failed to convert accelerator \"{}\" to key string due to invalid modifier \
+                    \"{bad_modifier}\"",
+                    accelerator.accelerator
+                );
+                return INVALID_ACTION;
+            }
+        };
+        let Ok(key) = Key::from_str(converted_accelerator.as_ref()) else {
+            warn!(
+                "failed to parse key from acclerator \"{}\" (converted to canonical form \
+                \"{converted_accelerator}\")",
+                accelerator.accelerator
+            );
             return INVALID_ACTION;
         };
         let action = self.get_next_action();
         if action == INVALID_ACTION {
-            // I
+            // There is no valid action here, so just don't bind the action at all and return the
+            // invalid value. Unbinding this later won't do anything, and we won't invoke this
+            // action.
             return action;
         }
         self.binds.push(Bind {
@@ -76,10 +97,10 @@ impl GlobalShortcuts {
                 release: Action::GlobalShortcutDeactivateAction(action),
             },
             repeat: false,
+            pass_through: None,
             cooldown: None,
             allow_when_locked: false,
             allow_inhibiting: false,
-            forward: true,
             hotkey_overlay_title: None,
         });
         action
@@ -146,9 +167,17 @@ pub struct AcceleratorGrab {
     pub accelerator: String,
 
     // GNOME parameters, unused by us
-    // Shell.ActionMode
+    /// A bitflag of Gnome's
+    /// [ShellActionMode](https://gitlab.gnome.org/GNOME/gnome-shell/-/blob/9a753aa969709d351632dbefd23333681cc5b3c2/src/shell-action-modes.h#L22)
+    /// enum.
+    ///
+    /// This requests where a given bind wants to run (e.g., in the lock screen, in the overview
+    /// mode). These don't apply to niri.
     _mode_flags: u32,
-    // Meta.KeyBindingFlags
+    /// A bitflag of Gnome's
+    /// [MetaKeyBindingFlags](https://gitlab.gnome.org/GNOME/mutter/-/blob/79b73fa28eabb81d3d8c67340f9e96b4503ab693/src/meta/prefs.h#L442)
+    ///
+    /// xdg-desktop-portal-gnome only ever sends the TRIGGER_RELEASE value for GlobalShortcuts.
     _grab_flags: u32,
 }
 
@@ -157,9 +186,9 @@ pub struct AcceleratorGrab {
 pub struct ActivationParameters {
     // GNOME portal/shell use u32 -- despite GlobalShortcuts interface using `t` (u64)
     timestamp: u32,
-    // GNOME shell uses this to signal state and block shortcuts in some states
-    // GNOME portal seems to not care what this is set to
-    // see Shell.ActionMode for the relevant enum
+    /// Specifies which "mode" the action was triggered in.
+    ///
+    /// This is the same enum used by [`AcceleratorGrab::_mode_flags`].
     #[zvariant(rename = "action-mode")]
     action_mode: u32,
 
@@ -228,24 +257,27 @@ impl Shell {
     }
 
     /// Activates the given `action`, with the given `time` being the time the action was pressed.
-    pub fn activate_action(&self, action: ActionId) {
-        let iface = self.iface.read().unwrap_or_else(PoisonError::into_inner);
+    pub fn activate_action(
+        &self,
+        action: ActionId,
+        input_time: InputTime,
+        activation_state: &mut XdgActivationState,
+    ) {
+        let iface = self.iface.read().unwrap();
         // Unwrap is safe since we drop the shell before activating any actions if the iface fails
         // to populate.
         let iface = iface.as_ref().unwrap();
+
+        let (activation_token, _) = activation_state.create_external_token(None);
+
         async_io::block_on(async {
             if let Err(err) = Self::accelerator_activated(
                 iface.signal_emitter(),
                 action,
                 ActivationParameters {
-                    // FIXME: This timestamp doesn't **seem** to do anything, but it's probably not
-                    // great that we're giving it a dummy value. However, getting the input time
-                    // from anything that can trigger a bind is non-trivial (e.g., key-repeat
-                    // timers). Ideally we'd get the InputTime for whatever event caused us to
-                    // activate this action.
-                    timestamp: 0,
+                    timestamp: input_time.millis(),
                     action_mode: 1,
-                    activation_token: String::new(),
+                    activation_token: activation_token.to_string(),
                 },
             )
             .await
@@ -256,24 +288,27 @@ impl Shell {
     }
 
     /// Activates the given `action`, with the given `time` being the time the action was pressed.
-    pub fn deactivate_action(&self, action: ActionId) {
-        let iface = self.iface.read().unwrap_or_else(PoisonError::into_inner);
+    pub fn deactivate_action(
+        &self,
+        action: ActionId,
+        input_time: InputTime,
+        activation_state: &mut XdgActivationState,
+    ) {
+        let iface = self.iface.read().unwrap();
         // Unwrap is safe since we drop the shell before activating any actions if the iface fails
         // to populate.
         let iface = iface.as_ref().unwrap();
+
+        let (activation_token, _) = activation_state.create_external_token(None);
+
         async_io::block_on(async {
             if let Err(err) = Self::accelerator_deactivated(
                 iface.signal_emitter(),
                 action,
                 ActivationParameters {
-                    // FIXME: This timestamp doesn't **seem** to do anything, but it's probably not
-                    // great that we're giving it a dummy value. However, getting the input time
-                    // from anything that can trigger a bind is non-trivial (e.g., key-repeat
-                    // timers). Ideally we'd get the InputTime for whatever event caused us to
-                    // deactivate this action.
-                    timestamp: 0,
+                    timestamp: input_time.millis(),
                     action_mode: 1,
-                    activation_token: String::new(),
+                    activation_token: activation_token.to_string(),
                 },
             )
             .await
@@ -301,5 +336,141 @@ impl Start for Shell {
         *iface_arc.write().unwrap_or_else(PoisonError::into_inner) = Some(iface);
 
         Ok(conn)
+    }
+}
+
+// Gnome portal converts modifiers into this format and back again afterwards. Their settings
+// provider seems to use a different format than everything else and their portal expects that.
+const GNOME_PORTAL_KEY_MAP: &[(&str, &str)] = &[
+    ("<control>", "Ctrl"),
+    ("<shift>", "Shift"),
+    ("<alt>", "Alt"),
+    ("<super>", "Super"),
+];
+
+/// Returns either the string with any Gnome modifiers replaced with their "canonical" form, or on
+/// failure, the modifier that was unable to be converted.
+fn convert_gnome_modifiers(input: &str) -> Result<Cow<'_, str>, &str> {
+    let mut parts: Vec<&str> = Vec::new();
+    let mut remaining = input;
+    while let Some(start) = remaining.find('<') {
+        let Some(end) = remaining[start..].find('>') else {
+            break;
+        };
+        let token = &remaining[start..=start + end];
+        let found_value = 'found: {
+            for (key, value) in GNOME_PORTAL_KEY_MAP {
+                if token.eq_ignore_ascii_case(*key) {
+                    break 'found value;
+                }
+            }
+            return Err(token);
+        };
+        parts.push(found_value);
+        remaining = &remaining[(start + end + 1)..];
+    }
+
+    if parts.is_empty() {
+        return Ok(Cow::Borrowed(remaining));
+    }
+
+    if !remaining.is_empty() {
+        parts.push(remaining);
+    }
+
+    Ok(parts.join("+").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use niri_config::{ModKey, Modifiers, Trigger};
+    use smithay::input::keyboard::Keysym;
+
+    use super::*;
+
+    #[test]
+    fn converts_without_gnome_modifiers() {
+        // Use match so we can check that we borrow the original input for no-modifier values.
+        match convert_gnome_modifiers("KP_Multiply").unwrap() {
+            Cow::Borrowed(value) => {
+                assert_eq!(value, "KP_Multiply");
+            }
+            Cow::Owned(_) => panic!("expected output to be borrowed, not owned"),
+        }
+        match convert_gnome_modifiers("ABC").unwrap() {
+            Cow::Borrowed(value) => {
+                assert_eq!(value, "ABC");
+            }
+            Cow::Owned(_) => panic!("expected output to be borrowed, not owned"),
+        }
+    }
+
+    #[test]
+    fn converts_with_gnome_modifiers() {
+        assert_eq!(
+            convert_gnome_modifiers("<Control>KP_Multiply"),
+            Ok(Cow::Owned("Ctrl+KP_Multiply".into()))
+        );
+        assert_eq!(
+            convert_gnome_modifiers("<shift>KP_Multiply"),
+            Ok(Cow::Owned("Shift+KP_Multiply".into()))
+        );
+        assert_eq!(
+            convert_gnome_modifiers("<ALT>KP_Multiply"),
+            Ok(Cow::Owned("Alt+KP_Multiply".into()))
+        );
+        assert_eq!(
+            convert_gnome_modifiers("<SuPeR>KP_Multiply"),
+            Ok(Cow::Owned("Super+KP_Multiply".into()))
+        );
+    }
+
+    #[test]
+    fn converts_many_gnome_modifiers() {
+        assert_eq!(
+            convert_gnome_modifiers("<Control><ALT><shift>KP_Multiply"),
+            Ok(Cow::Owned("Ctrl+Alt+Shift+KP_Multiply".into()))
+        );
+    }
+
+    #[test]
+    fn converts_only_gnome_modifiers() {
+        assert_eq!(
+            convert_gnome_modifiers("<Control><ALT><shift>"),
+            Ok(Cow::Owned("Ctrl+Alt+Shift".into()))
+        );
+    }
+
+    #[test]
+    fn err_on_invalid_gnome_modifier() {
+        assert_eq!(convert_gnome_modifiers("<fake>KP_Multiply"), Err("<fake>"));
+    }
+
+    #[test]
+    fn creates_valid_keys() {
+        let converted = convert_gnome_modifiers("<Control>KP_Multiply").unwrap();
+        assert_eq!(
+            Key::from_str(converted.as_ref()).unwrap(),
+            Key {
+                trigger: Trigger::Keysym(Keysym::KP_Multiply),
+                modifiers: Modifiers::CTRL,
+            }
+        );
+        let converted = convert_gnome_modifiers("<Control><ALT><shift>KP_Multiply").unwrap();
+        assert_eq!(
+            Key::from_str(converted.as_ref()).unwrap(),
+            Key {
+                trigger: Trigger::Keysym(Keysym::KP_Multiply),
+                modifiers: Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT,
+            }
+        );
+        let converted = convert_gnome_modifiers("<Control><ALT><shift>").unwrap();
+        assert_eq!(
+            Key::from_str(converted.as_ref()).unwrap(),
+            Key {
+                trigger: Trigger::Modifier(ModKey::Shift),
+                modifiers: Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT,
+            }
+        );
     }
 }
