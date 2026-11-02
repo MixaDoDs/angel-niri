@@ -1,5 +1,6 @@
 use niri_config::Action;
 use niri_config::WorkspaceReference;
+use smithay::backend::input::InputTime;
 
 use super::*;
 use crate::tests::client::ClientId;
@@ -32,7 +33,7 @@ fn active_number(f: &mut Fixture) -> usize {
 }
 
 fn act(f: &mut Fixture, action: Action) {
-    f.niri_state().do_action(action, false);
+    f.niri_state().do_action(action, false, InputTime::now());
     f.niri_complete_animations();
 }
 
