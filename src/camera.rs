@@ -23,8 +23,6 @@ const SAFE: f64 = 0.25;
 /// Camera shutter (Recordly: motion blur 0.35 × 4), and the longest smear on screen (logical).
 const SHUTTER: f64 = 1.4;
 const MAX_SMEAR: f64 = 42.;
-/// How much the pointer grows with the zoom: 1 + (zoom − 1) × this.
-pub const POINTER_GROW: f64 = 0.6;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
@@ -82,11 +80,6 @@ impl Frame {
             (p.x - self.focus.x) * self.zoom + self.half.0,
             (p.y - self.focus.y) * self.zoom + self.half.1,
         ))
-    }
-
-    /// How much bigger the pointer is drawn.
-    pub fn pointer_grow(&self) -> f64 {
-        1. + (self.zoom - 1.) * POINTER_GROW
     }
 }
 

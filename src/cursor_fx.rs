@@ -1,18 +1,17 @@
-//! angel-niri: a living pointer. `niri msg action set-cursor-fx true [--size 1.5] [--sway 1]
-//! [--blur 1] [--bounce 1] [--shadow 1]` (`false` turns it off; the pointer is then drawn exactly
-//! as before).
+//! angel-niri: a living pointer. `niri msg action set-cursor-fx true [--size 2] [--sway 1]
+//! [--bounce 1] [--shadow 1]` (`false` turns it off; the pointer is then drawn exactly as before).
 //!
 //! The pointer leans into its motion on a damped spring and swings back when it stops, dips on a
-//! click with a ring spreading out from the tip, smears along its path when it flies, and floats
-//! over a soft shadow that drops further away the faster it goes (pressed flat on a click). The
-//! ideas follow Recordly's cursor renderer (sway into motion, click bounce, ripple, directional
-//! blur, drop shadow; github.com/webadderall/Recordly, AGPL) — written anew here for a live
-//! compositor: the tip is never smoothed or delayed, so the pointer stays exactly where the mouse
-//! is; only the picture around the tip moves.
+//! click with a ring spreading out from the tip, and sits over a hard pixel shadow one art pixel
+//! away (two when it flies, tucked under on a click). The ideas follow Recordly's cursor renderer
+//! (sway into motion, click bounce, ripple; github.com/webadderall/Recordly, AGPL) — written anew
+//! here for a live compositor: the tip is never smoothed or delayed, so the pointer stays exactly
+//! where the mouse is; only the picture around the tip moves. No smear: copies along the path
+//! fall apart into a row of arrows on a fast flick (03.11, the owner: «дохуя курсоров»).
 //!
 //! Pictures are made on the CPU and cached: the arrow turned and scaled by supersampled nearest
-//! neighbour (pixel cursors keep their pixels, edges get a little antialiasing), its shadow blurred
-//! from it, and the ring per step of its growth.
+//! neighbour (whole sizes only, so pixel cursors keep their pixels), its shadow the same
+//! silhouette in dark grey, and the ring per step of its growth.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -27,8 +26,8 @@ use smithay::utils::{Logical, Point, Transform};
 
 use crate::cursor::XCursor;
 
-/// Lean at full speed, degrees (Recordly: π/18 · sway 0.4 · 3 = 12°).
-const SWAY_MAX_DEG: f64 = 12.;
+/// Lean at full speed, degrees (half of Recordly's 12°: a turned pixel arrow gets soft edges).
+const SWAY_MAX_DEG: f64 = 6.;
 /// Speed of full lean, logical px/s.
 const SWAY_SPEED_REF: f64 = 1400.;
 const SWAY_VERTICAL_WEIGHT: f64 = 0.65;
@@ -42,17 +41,12 @@ const POP_MS: f64 = 240.;
 const RING_MS: f64 = 480.;
 const RING_REACH: f64 = 1.25;
 const RING_STEPS: u32 = 28;
-/// The blur: the arrow is smeared over BLUR_SHUTTER × the path of the last frame.
-const BLUR_SHUTTER: f64 = 0.9;
-pub const BLUR_MAX_COPIES: usize = 7;
-/// The shadow: the arrow's own silhouette cast far down-right, as in the reference video
-/// (measured there at rest: 0.4 / 0.7 of the arrow's height away, ~50 % grey, edges soft but
-/// the shape readable). Lifted (fast) it goes a little further, pressed it comes closer.
-const SHADOW_REST: (f64, f64) = (0.40, 0.70);
-const SHADOW_LIFT: (f64, f64) = (0.48, 0.82);
-const SHADOW_PRESSED: f64 = 0.55;
+/// The shadow: the arrow's own silhouette, hard-edged, down-right by whole art pixels — one at
+/// rest, two lifted (fast), none pressed. (The reference's 0.4 / 0.7 of the arrow's height read
+/// as a separate dark blob on a live desktop.)
+const SHADOW_REST_PX: f64 = 1.;
+const SHADOW_LIFT_PX: f64 = 2.;
 const SHADOW_ALPHA: f64 = 0.50;
-const SHADOW_SOFT: f64 = 0.045;
 /// Speed at which the arrow is fully lifted, logical px/s.
 const LIFT_SPEED: f64 = 1800.;
 /// How much bigger the arrow looks when lifted.
@@ -63,11 +57,9 @@ pub struct Params {
     pub on: bool,
     pub size: f64,
     pub sway: f64,
-    pub blur: f64,
     pub bounce: f64,
     pub shadow: f64,
     pub shadow_dist: f64,
-    pub shadow_soft: f64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -98,8 +90,6 @@ struct State {
     last: Option<Duration>,
     pos: Point<f64, Logical>,
     vel: (f64, f64),
-    /// path of the last frame (for the blur)
-    streak: (f64, f64),
     tilt: Spring,
     lift: Spring,
     press_at: Option<Duration>,
@@ -118,13 +108,9 @@ pub struct Fx {
     pub size: f64,
     pub angle_deg: f64,
     pub scale: f64,
-    /// shadow offset (logical, at size 1 × arrow height) and alpha
+    /// shadow offset (whole art pixels: × `size` for logical) and alpha
     pub shadow: (f64, f64, f32),
     pub shadow_on: bool,
-    /// how soft the shadow is (multiplier)
-    pub soft: f64,
-    /// the last frame's path, logical, to smear along (backwards from the tip)
-    pub streak: (f64, f64),
     /// rings: global position and progress 0..1
     pub ripples: Vec<(Point<f64, Logical>, f64)>,
 }
@@ -135,16 +121,13 @@ thread_local! {
             on: false,
             size: 1.,
             sway: 1.,
-            blur: 1.,
             bounce: 1.,
             shadow: 1.,
             shadow_dist: 1.,
-            shadow_soft: 1.,
         },
         last: None,
         pos: Point::from((0., 0.)),
         vel: (0., 0.),
-        streak: (0., 0.),
         tilt: Spring::default(),
         lift: Spring::default(),
         press_at: None,
@@ -161,13 +144,12 @@ thread_local! {
 pub fn set(params: Params) {
     let p = Params {
         on: params.on,
-        size: finite(params.size, 1.).clamp(0.5, 4.),
+        // whole sizes only: at 1.5× a pixel arrow gets pixels of uneven width
+        size: finite(params.size, 1.).round().clamp(1., 4.),
         sway: finite(params.sway, 1.).clamp(0., 3.),
-        blur: finite(params.blur, 1.).clamp(0., 3.),
         bounce: finite(params.bounce, 1.).clamp(0., 3.),
         shadow: finite(params.shadow, 1.).clamp(0., 3.),
         shadow_dist: finite(params.shadow_dist, 1.).clamp(0., 3.),
-        shadow_soft: finite(params.shadow_soft, 1.).clamp(0.2, 4.),
     };
     STATE.with_borrow_mut(|s| {
         s.params = p;
@@ -233,16 +215,13 @@ pub fn update(
             // a jump (warp, other output) is not motion
             if dx.hypot(dy) > 400. {
                 s.vel = (0., 0.);
-                s.streak = (0., 0.);
             } else {
                 let raw = (dx / dt, dy / dt);
                 let a = 1. - (-dt / 0.03).exp();
                 s.vel = (s.vel.0 + (raw.0 - s.vel.0) * a, s.vel.1 + (raw.1 - s.vel.1) * a);
-                s.streak = (dx, dy);
             }
         } else {
             s.vel = (0., 0.);
-            s.streak = (0., 0.);
         }
         s.pos = pos;
         s.last = Some(now);
@@ -290,26 +269,19 @@ pub fn update(
 
         let scale = ((1. - dip) * (1. + pop) * (1. + LIFT_GROW * lift)).max(0.6);
 
-        let pressed = dip / DIP.max(1e-6);
-        let flat = (1. - (1. - SHADOW_PRESSED) * pressed.clamp(0., 1.)) * p.shadow_dist;
-        let sx = (SHADOW_REST.0 + (SHADOW_LIFT.0 - SHADOW_REST.0) * lift) * flat;
-        let sy = (SHADOW_REST.1 + (SHADOW_LIFT.1 - SHADOW_REST.1) * lift) * flat;
+        let pressed = (dip / DIP.max(1e-6)).clamp(0., 1.);
+        let dist = ((SHADOW_REST_PX + (SHADOW_LIFT_PX - SHADOW_REST_PX) * lift)
+            * (1. - pressed)
+            * p.shadow_dist)
+            .round();
         let sa = (SHADOW_ALPHA * (1. - 0.12 * lift + 0.10 * pressed) * p.shadow).min(0.9);
-
-        let streak = if p.blur > 0. {
-            (s.streak.0 * BLUR_SHUTTER * p.blur, s.streak.1 * BLUR_SHUTTER * p.blur)
-        } else {
-            (0., 0.)
-        };
 
         let fx = Fx {
             size: p.size,
             angle_deg: s.tilt.x,
             scale,
-            shadow: (sx, sy, sa as f32),
+            shadow: (dist, dist, sa as f32),
             shadow_on: p.shadow > 0.,
-            soft: p.shadow_soft,
-            streak,
             ripples: s
                 .ripples
                 .iter()
@@ -336,7 +308,6 @@ pub fn animating(now: Duration) -> bool {
         !s.tilt.settled(0.)
             || !s.lift.settled(0.)
             || s.vel.0.hypot(s.vel.1) > 2.
-            || s.streak.0.hypot(s.streak.1) > 0.3
             || !s.ripples.is_empty()
             || s.pending_click
             || busy(s.press_at, BOUNCE_MS)
@@ -351,15 +322,15 @@ pub struct Frame {
     pub buf: MemoryRenderBuffer,
     /// the tip inside `buf`, logical
     pub hot: Point<f64, Logical>,
+    /// the arrow's silhouette in dark grey, same size and tip as `buf`
     pub shadow: MemoryRenderBuffer,
-    pub shadow_hot: Point<f64, Logical>,
     /// arrow height, logical (for the ring and shadow distances)
     pub height: f64,
 }
 
 #[derive(Default)]
 struct Cache {
-    frames: HashMap<(usize, CursorIcon, i32, usize, i32, i32, i32), Frame>,
+    frames: HashMap<(usize, CursorIcon, i32, usize, i32, i32), Frame>,
     rings: HashMap<(i32, i32, u32), (MemoryRenderBuffer, f64)>,
 }
 
@@ -375,8 +346,14 @@ pub fn frame(icon: CursorIcon, scale: i32, cursor: &XCursor, idx: usize, fx: &Fx
     // steps: half a degree, 1/64 of size
     let a_step = (fx.angle_deg * 2.).round() as i32;
     let k_step = (fx.scale * fx.size * 64.).round().max(16.) as i32;
-    let soft_step = (fx.soft * 20.).round().max(1.) as i32;
-    let key = (cursor as *const XCursor as usize, icon, scale, idx, a_step, k_step, soft_step);
+    let key = (
+        cursor as *const XCursor as usize,
+        icon,
+        scale,
+        idx,
+        a_step,
+        k_step,
+    );
     CACHE.with_borrow_mut(|c| {
         if c.frames.len() > 900 {
             c.frames.clear();
@@ -393,7 +370,6 @@ pub fn frame(icon: CursorIcon, scale: i32, cursor: &XCursor, idx: usize, fx: &Fx
                     f64::from(a_step) / 2.,
                     f64::from(k_step) / 64.,
                     scale,
-                    f64::from(soft_step) / 20.,
                 )
             })
             .clone()
@@ -491,7 +467,6 @@ pub fn surface_shape(now: Duration, key: u64) {
 pub fn frame_raw(raw: &RawCursor, hot: Point<i32, Logical>, fx: &Fx) -> Frame {
     let a_step = (fx.angle_deg * 2.).round() as i32;
     let k_step = (fx.scale * fx.size * 64.).round().max(16.) as i32;
-    let soft_step = (fx.soft * 20.).round().max(1.) as i32;
     // the high bit keeps client pictures apart from the theme's (keyed by address)
     let key = (
         (raw.key as usize) | (1 << (usize::BITS - 1)),
@@ -500,7 +475,6 @@ pub fn frame_raw(raw: &RawCursor, hot: Point<i32, Logical>, fx: &Fx) -> Frame {
         0,
         a_step,
         k_step,
-        soft_step,
     );
     CACHE.with_borrow_mut(|c| {
         if c.frames.len() > 900 {
@@ -518,7 +492,6 @@ pub fn frame_raw(raw: &RawCursor, hot: Point<i32, Logical>, fx: &Fx) -> Frame {
                     f64::from(a_step) / 2.,
                     f64::from(k_step) / 64.,
                     raw.scale,
-                    f64::from(soft_step) / 20.,
                 )
             })
             .clone()
@@ -534,7 +507,6 @@ fn build_frame(
     angle_deg: f64,
     k: f64,
     scale: i32,
-    soft: f64,
 ) -> Frame {
     let a = angle_deg.to_radians();
     let (sin, cos) = a.sin_cos();
@@ -587,32 +559,13 @@ fn build_frame(
         }
     }
 
-    // the shadow: the alpha blurred (three box passes ≈ gaussian)
+    // the shadow: the same silhouette, neutral dark grey (premultiplied B G R A)
     let height_px = h as f64 * k;
-    let sigma = (height_px * SHADOW_SOFT * soft).max(1.);
-    let pad = (sigma * 3.).ceil() as usize + 1;
-    let (sw, sh) = (nw + pad * 2, nh + pad * 2);
-    let mut alpha = vec![0f32; sw * sh];
-    for y in 0..nh {
-        for x in 0..nw {
-            alpha[(y + pad) * sw + x + pad] = f32::from(px[(y * nw + x) * 4 + 3]) / 255.;
-        }
-    }
-    let bw = (4. * sigma * sigma + 1.).sqrt();
-    let r = (((bw - 1.) / 2.).round() as usize).max(1);
-    let mut tmp = vec![0f32; sw * sh];
-    for _ in 0..3 {
-        box_blur(&alpha, &mut tmp, sw, sh, r, true);
-        box_blur(&tmp, &mut alpha, sw, sh, r, false);
-    }
-    let mut spx = vec![0u8; sw * sh * 4];
-    for (i, a) in alpha.iter().enumerate() {
-        // neutral dark grey, premultiplied (ARGB8888 in memory: B G R A)
-        let a = a.clamp(0., 1.);
-        spx[i * 4] = (a * 4.) as u8;
-        spx[i * 4 + 1] = (a * 4.) as u8;
-        spx[i * 4 + 2] = (a * 4.) as u8;
-        spx[i * 4 + 3] = (a * 255.) as u8;
+    let mut spx = vec![0u8; nw * nh * 4];
+    for i in 0..nw * nh {
+        let a = px[i * 4 + 3];
+        spx[i * 4..i * 4 + 3].fill((u32::from(a) * 4 / 255) as u8);
+        spx[i * 4 + 3] = a;
     }
 
     let s = f64::from(scale);
@@ -627,7 +580,7 @@ fn build_frame(
     let shadow = MemoryRenderBuffer::from_slice(
         &spx,
         Fourcc::Argb8888,
-        (sw as i32, sh as i32),
+        (nw as i32, nh as i32),
         scale,
         Transform::Normal,
         None,
@@ -636,29 +589,7 @@ fn build_frame(
         buf,
         hot: Point::from((ox as f64 / s, oy as f64 / s)),
         shadow,
-        shadow_hot: Point::from(((ox as f64 + pad as f64) / s, (oy as f64 + pad as f64) / s)),
         height: height_px / s,
-    }
-}
-
-fn box_blur(src: &[f32], dst: &mut [f32], w: usize, h: usize, r: usize, horizontal: bool) {
-    let norm = 1. / (2 * r + 1) as f32;
-    let (lines, len) = if horizontal { (h, w) } else { (w, h) };
-    let at = |line: usize, i: usize| if horizontal { line * w + i } else { i * w + line };
-    for line in 0..lines {
-        let mut sum = 0f32;
-        for i in 0..=r.min(len - 1) {
-            sum += src[at(line, i)];
-        }
-        for i in 0..len {
-            dst[at(line, i)] = sum * norm;
-            if i + r + 1 < len {
-                sum += src[at(line, i + r + 1)];
-            }
-            if i >= r {
-                sum -= src[at(line, i - r)];
-            }
-        }
     }
 }
 
@@ -746,11 +677,9 @@ mod tests {
             on: true,
             size: 1.,
             sway: 1.,
-            blur: 1.,
             bounce: 1.,
             shadow: 1.,
             shadow_dist: 1.,
-            shadow_soft: 1.,
         });
         let t = Duration::from_secs(100);
         let at = Point::from((10., 10.));
@@ -765,19 +694,42 @@ mod tests {
             on: false,
             size: 1.,
             sway: 1.,
-            blur: 1.,
             bounce: 1.,
             shadow: 1.,
             shadow_dist: 1.,
-            shadow_soft: 1.,
         });
+    }
+
+    #[test]
+    fn shadow_one_art_pixel_away_none_on_a_click_and_whole_sizes() {
+        let params = |on| Params {
+            on,
+            size: 1.5,
+            sway: 1.,
+            bounce: 1.,
+            shadow: 1.,
+            shadow_dist: 1.,
+        };
+        set(params(true));
+        let t = Duration::from_secs(200);
+        let at = Point::from((50., 50.));
+        let rest = update(t, at, None, true).unwrap();
+        assert_eq!(rest.size, 2., "1.5 is drawn at a whole size");
+        assert_eq!((rest.shadow.0, rest.shadow.1), (1., 1.));
+        button(true, t + Duration::from_millis(10));
+        // the deepest point of the dip, half way through it
+        let mid = t + Duration::from_millis(10 + BOUNCE_MS as u64 / 2);
+        update(t + Duration::from_millis(10), at, None, true);
+        let pressed = update(mid, at, None, true).unwrap();
+        assert_eq!((pressed.shadow.0, pressed.shadow.1), (0., 0.));
+        set(params(false));
     }
 
     #[test]
     fn turned_frame_keeps_the_tip() {
         // 4×4 opaque square, tip at the corner, scaled 2×, not turned
         let src = vec![255u8; 4 * 4 * 4];
-        let f = build_frame(&src, 4, 4, (0., 0.), 0., 2., 1, 1.);
+        let f = build_frame(&src, 4, 4, (0., 0.), 0., 2., 1);
         assert_eq!(f.hot, Point::from((1., 1.)));
     }
 
@@ -797,8 +749,6 @@ mod tests {
             scale: 1.,
             shadow: (0., 0., 0.),
             shadow_on: false,
-            soft: 1.,
-            streak: (0., 0.),
             ripples: vec![],
         };
         let f = frame_raw(&raw, Point::from((2, 3)), &fx);

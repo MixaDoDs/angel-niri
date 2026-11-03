@@ -4215,10 +4215,10 @@ impl Niri {
             },
             !matches!(render_cursor, RenderCursor::Hidden),
         );
-        // …and a little bigger with the zoom
+        // …and as much bigger as the screen, in whole steps so its pixels stay even
         let living = living.map(|mut fx| {
             if let Some(cam) = camera {
-                fx.size *= cam.pointer_grow();
+                fx.size = (fx.size * cam.zoom).round();
             }
             fx
         });
@@ -4254,7 +4254,7 @@ impl Niri {
             RenderCursor::Surface { surface, hotspot } => {
                 // angel-niri: the living pointer for a client's own cursor picture too (X11
                 // apps — Steam, Proton games — draw theirs themselves): read once per picture,
-                // then turned, smeared and shadowed like the theme's arrow
+                // then turned and shadowed like the theme's arrow
                 let raw = living
                     .as_ref()
                     .filter(|_| !zoomed)
@@ -4263,18 +4263,6 @@ impl Niri {
                     crate::cursor_fx::surface_shape(self.clock.now(), raw.key);
                     let f = crate::cursor_fx::frame_raw(&raw, hotspot, lfx);
                     put(renderer, push, pointer_pos - f.hot, output_scale, &f.buf, 1., Kind::Cursor);
-                    let (sx, sy) = lfx.streak;
-                    let len = sx.hypot(sy);
-                    if len > 3. {
-                        let n = ((len / 4.).ceil() as usize)
-                            .clamp(2, crate::cursor_fx::BLUR_MAX_COPIES);
-                        for i in 1..=n {
-                            let t = i as f64 / n as f64;
-                            let a = (0.42 * (1. - t) + 0.06) as f32;
-                            let at = pointer_pos - Point::from((sx * t, sy * t)) - f.hot;
-                            put(renderer, push, at, output_scale, &f.buf, a, Kind::Unspecified);
-                        }
-                    }
                     living_height = f.height;
                     if lfx.shadow_on {
                         living_shadow = Some((f, lfx.shadow));
@@ -4302,21 +4290,9 @@ impl Niri {
                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
                 if let Some(lfx) = living.as_ref().filter(|_| !zoomed) {
                     // angel-niri: the living pointer (cursor_fx): turned and scaled about the
-                    // tip, smeared back along its path, its shadow drawn last (underneath)
+                    // tip, its shadow drawn last (underneath)
                     let f = crate::cursor_fx::frame(icon, scale, &cursor, idx, lfx);
                     put(renderer, push, pointer_pos - f.hot, output_scale, &f.buf, 1., Kind::Cursor);
-                    let (sx, sy) = lfx.streak;
-                    let len = sx.hypot(sy);
-                    if len > 3. {
-                        let n = ((len / 4.).ceil() as usize)
-                            .clamp(2, crate::cursor_fx::BLUR_MAX_COPIES);
-                        for i in 1..=n {
-                            let t = i as f64 / n as f64;
-                            let a = (0.42 * (1. - t) + 0.06) as f32;
-                            let at = pointer_pos - Point::from((sx * t, sy * t)) - f.hot;
-                            put(renderer, push, at, output_scale, &f.buf, a, Kind::Unspecified);
-                        }
-                    }
                     living_height = f.height;
                     if lfx.shadow_on {
                         living_shadow = Some((f, lfx.shadow));
@@ -4372,17 +4348,9 @@ impl Niri {
                 put(renderer, push, local, output_scale, &buf, a, Kind::Unspecified);
             }
             if let Some((f, (ox, oy, a))) = living_shadow {
-                let at =
-                    pointer_pos - f.shadow_hot + Point::from((ox * f.height, oy * f.height));
-                // smeared with the arrow when it flies: a few copies back along its path
-                let (sx, sy) = lfx.streak;
-                let n = if sx.hypot(sy) > 3. { 3 } else { 1 };
-                for i in 0..n {
-                    let t = i as f64 / n as f64;
-                    let a = if n == 1 { a } else { a * (0.62 - 0.12 * i as f32) };
-                    let at = at - Point::from((sx * t, sy * t));
-                    put(renderer, push, at, output_scale, &f.shadow, a, Kind::Unspecified);
-                }
+                // whole art pixels away
+                let at = pointer_pos - f.hot + Point::from((ox * lfx.size, oy * lfx.size));
+                put(renderer, push, at, output_scale, &f.shadow, a, Kind::Unspecified);
             }
         }
 

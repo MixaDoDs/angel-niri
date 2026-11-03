@@ -1100,16 +1100,15 @@ impl State {
             Action::SetWindowThrow(strength, bounce, squash, wobble) => {
                 crate::window_throw::set(strength, bounce, squash, wobble);
             }
-            Action::SetCursorFx(on, size, sway, blur, bounce, shadow, shadow_dist, shadow_soft) => {
+            // blur and shadow_soft are gone (03.11): still accepted from older shells, unused
+            Action::SetCursorFx(on, size, sway, _blur, bounce, shadow, shadow_dist, _soft) => {
                 crate::cursor_fx::set(crate::cursor_fx::Params {
                     on,
                     size,
                     sway,
-                    blur,
                     bounce,
                     shadow,
                     shadow_dist,
-                    shadow_soft,
                 });
                 self.niri.queue_redraw_all();
             }

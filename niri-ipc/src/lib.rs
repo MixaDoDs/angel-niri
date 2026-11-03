@@ -750,14 +750,14 @@ pub enum Action {
     /// A living pointer (angel-niri).
     ///
     /// The pointer leans into its motion and swings back when it stops, dips on a click with a
-    /// ring spreading from the tip, smears when it flies and floats over a soft shadow; `size`
+    /// ring spreading from the tip and sits over a hard pixel shadow; `size` (whole numbers)
     /// draws it bigger. The tip itself is never delayed. `false` draws it as before.
     #[cfg_attr(feature = "clap", clap(about = "Animate the pointer"))]
     SetCursorFx {
         /// On or off.
         #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
         on: bool,
-        /// How many times bigger the pointer is drawn, 0.5 to 4.
+        /// How many times bigger the pointer is drawn, 1 to 4, rounded to a whole number.
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         size: f64,
@@ -765,7 +765,7 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         sway: f64,
-        /// Motion smear, 0 to 3.
+        /// Ignored (the smear was removed); kept so older callers still parse.
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         blur: f64,
@@ -777,11 +777,11 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         shadow: f64,
-        /// How far the shadow falls, 0 to 3 (1 = as in the reference).
+        /// How far the shadow falls, 0 to 3 (1 = one art pixel at rest, two when fast).
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         shadow_dist: f64,
-        /// How soft the shadow is, 0.2 to 4.
+        /// Ignored (the shadow is a hard pixel silhouette); kept so older callers still parse.
         #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
         #[serde(default = "default_cursor_fx_one")]
         shadow_soft: f64,
