@@ -4252,18 +4252,47 @@ impl Niri {
         match render_cursor {
             RenderCursor::Hidden => (),
             RenderCursor::Surface { surface, hotspot } => {
-                let pointer_pos =
-                    (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+                // angel-niri: the living pointer for a client's own cursor picture too (X11
+                // apps — Steam, Proton games — draw theirs themselves): read once per picture,
+                // then turned, smeared and shadowed like the theme's arrow
+                let raw = living
+                    .as_ref()
+                    .filter(|_| !zoomed)
+                    .and_then(|_| crate::cursor_fx::surface_pixels(&surface));
+                if let (Some(lfx), Some(raw)) = (living.as_ref(), raw) {
+                    crate::cursor_fx::surface_shape(self.clock.now(), raw.key);
+                    let f = crate::cursor_fx::frame_raw(&raw, hotspot, lfx);
+                    put(renderer, push, pointer_pos - f.hot, output_scale, &f.buf, 1., Kind::Cursor);
+                    let (sx, sy) = lfx.streak;
+                    let len = sx.hypot(sy);
+                    if len > 3. {
+                        let n = ((len / 4.).ceil() as usize)
+                            .clamp(2, crate::cursor_fx::BLUR_MAX_COPIES);
+                        for i in 1..=n {
+                            let t = i as f64 / n as f64;
+                            let a = (0.42 * (1. - t) + 0.06) as f32;
+                            let at = pointer_pos - Point::from((sx * t, sy * t)) - f.hot;
+                            put(renderer, push, at, output_scale, &f.buf, a, Kind::Unspecified);
+                        }
+                    }
+                    living_height = f.height;
+                    if lfx.shadow_on {
+                        living_shadow = Some((f, lfx.shadow));
+                    }
+                } else {
+                    let pointer_pos =
+                        (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
 
-                push_elements_from_surface_tree(
-                    renderer,
-                    &surface,
-                    pointer_pos,
-                    output_scale,
-                    1.,
-                    Kind::Cursor,
-                    &mut |elem| push(elem.into()),
-                );
+                    push_elements_from_surface_tree(
+                        renderer,
+                        &surface,
+                        pointer_pos,
+                        output_scale,
+                        1.,
+                        Kind::Cursor,
+                        &mut |elem| push(elem.into()),
+                    );
+                }
             }
             RenderCursor::Named {
                 icon,

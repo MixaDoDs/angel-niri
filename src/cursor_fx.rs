@@ -22,6 +22,7 @@ use std::time::Duration;
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
 use smithay::input::pointer::CursorIcon;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Transform};
 
 use crate::cursor::XCursor;
@@ -107,6 +108,8 @@ struct State {
     pending_click: bool,
     ripples: Vec<(Point<f64, Logical>, Duration)>,
     fx: Option<Fx>,
+    /// the last client cursor picture seen (its key), so a change of it pops like a shape change
+    surface_key: Option<u64>,
 }
 
 /// What to draw this frame.
@@ -150,6 +153,7 @@ thread_local! {
         pending_click: false,
         ripples: vec![],
         fx: None,
+        surface_key: None,
     });
     static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
 }
@@ -389,6 +393,131 @@ pub fn frame(icon: CursorIcon, scale: i32, cursor: &XCursor, idx: usize, fx: &Fx
                     f64::from(a_step) / 2.,
                     f64::from(k_step) / 64.,
                     scale,
+                    f64::from(soft_step) / 20.,
+                )
+            })
+            .clone()
+    })
+}
+
+/// A client's own cursor picture (X11 apps through xwayland-satellite — Steam, Wine/Proton
+/// games — and anything else not using cursor-shape): its pixels read from the shm buffer,
+/// premultiplied B G R A like an XCursor's. `key` names the picture for the cache.
+pub struct RawCursor {
+    pub key: u64,
+    pub px: Vec<u8>,
+    pub w: usize,
+    pub h: usize,
+    pub scale: i32,
+}
+
+/// The client cursor `surface`'s picture, when it can be read: one shm buffer (ARGB / XRGB),
+/// no subsurfaces, no transform or viewport. Otherwise None and the cursor is drawn as before.
+pub fn surface_pixels(surface: &WlSurface) -> Option<RawCursor> {
+    use std::hash::{Hash, Hasher};
+
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+    use smithay::reexports::wayland_server::protocol::wl_shm;
+    use smithay::wayland::compositor::{get_children, with_states};
+    use smithay::wayland::shm::with_buffer_contents;
+
+    if !get_children(surface).is_empty() {
+        return None;
+    }
+    with_states(surface, |states| {
+        let data = states.data_map.get::<RendererSurfaceStateUserData>()?;
+        let data = data.lock().ok()?;
+        if data.buffer_transform() != Transform::Normal {
+            return None;
+        }
+        let scale = data.buffer_scale().max(1);
+        if data.surface_size() != data.buffer_size() {
+            return None;
+        }
+        let buffer = data.buffer()?;
+        with_buffer_contents(buffer, |ptr, len, d| {
+            let opaque = match d.format {
+                wl_shm::Format::Argb8888 => false,
+                wl_shm::Format::Xrgb8888 => true,
+                _ => return None,
+            };
+            let (w, h, stride) = (d.width as usize, d.height as usize, d.stride as usize);
+            if w == 0 || h == 0 || w > 512 || h > 512 || stride < w * 4 {
+                return None;
+            }
+            let off = d.offset as usize;
+            if off + stride * (h - 1) + w * 4 > len {
+                return None;
+            }
+            // SAFETY: the range was checked against the pool's length just above
+            let pool = unsafe { std::slice::from_raw_parts(ptr, len) };
+            let mut px = Vec::with_capacity(w * h * 4);
+            for y in 0..h {
+                let row = off + y * stride;
+                px.extend_from_slice(&pool[row..row + w * 4]);
+            }
+            if opaque {
+                for a in px.iter_mut().skip(3).step_by(4) {
+                    *a = 255;
+                }
+            }
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (w, h, scale).hash(&mut hasher);
+            px.hash(&mut hasher);
+            Some(RawCursor {
+                key: hasher.finish(),
+                px,
+                w,
+                h,
+                scale,
+            })
+        })
+        .ok()
+        .flatten()
+    })
+}
+
+/// The client's picture changed (a new shape): pop it like a theme cursor's shape change.
+pub fn surface_shape(now: Duration, key: u64) {
+    STATE.with_borrow_mut(|s| {
+        if s.params.on && s.surface_key.is_some_and(|k| k != key) {
+            s.pop_at = Some(now);
+        }
+        s.surface_key = Some(key);
+    });
+}
+
+/// A client's cursor picture (tip at `hot`, logical) turned and scaled as `fx` says.
+pub fn frame_raw(raw: &RawCursor, hot: Point<i32, Logical>, fx: &Fx) -> Frame {
+    let a_step = (fx.angle_deg * 2.).round() as i32;
+    let k_step = (fx.scale * fx.size * 64.).round().max(16.) as i32;
+    let soft_step = (fx.soft * 20.).round().max(1.) as i32;
+    // the high bit keeps client pictures apart from the theme's (keyed by address)
+    let key = (
+        (raw.key as usize) | (1 << (usize::BITS - 1)),
+        CursorIcon::Default,
+        raw.scale,
+        0,
+        a_step,
+        k_step,
+        soft_step,
+    );
+    CACHE.with_borrow_mut(|c| {
+        if c.frames.len() > 900 {
+            c.frames.clear();
+        }
+        c.frames
+            .entry(key)
+            .or_insert_with(|| {
+                let s = f64::from(raw.scale);
+                build_frame(
+                    &raw.px,
+                    raw.w,
+                    raw.h,
+                    (f64::from(hot.x) * s, f64::from(hot.y) * s),
+                    f64::from(a_step) / 2.,
+                    f64::from(k_step) / 64.,
+                    raw.scale,
                     f64::from(soft_step) / 20.,
                 )
             })
@@ -650,5 +779,34 @@ mod tests {
         let src = vec![255u8; 4 * 4 * 4];
         let f = build_frame(&src, 4, 4, (0., 0.), 0., 2., 1, 1.);
         assert_eq!(f.hot, Point::from((1., 1.)));
+    }
+
+    #[test]
+    fn a_client_picture_keeps_its_tip_and_its_own_cache_slot() {
+        // a client's 8×8 picture at buffer scale 2, tip at (2, 3) logical = (4, 6) px
+        let raw = RawCursor {
+            key: 42,
+            px: vec![255u8; 8 * 8 * 4],
+            w: 8,
+            h: 8,
+            scale: 2,
+        };
+        let fx = Fx {
+            size: 1.,
+            angle_deg: 0.,
+            scale: 1.,
+            shadow: (0., 0., 0.),
+            shadow_on: false,
+            soft: 1.,
+            streak: (0., 0.),
+            ripples: vec![],
+        };
+        let f = frame_raw(&raw, Point::from((2, 3)), &fx);
+        // the tip: its 4×6 px of picture above-left plus the 1 px margin, logical at scale 2
+        assert_eq!(f.hot, Point::from((2.5, 3.5)));
+        assert_eq!(f.height, 4.);
+        let other = RawCursor { key: 43, ..raw };
+        let g = frame_raw(&other, Point::from((0, 0)), &fx);
+        assert_eq!(g.hot, Point::from((0.5, 0.5)));
     }
 }
