@@ -1100,6 +1100,19 @@ impl State {
             Action::SetWindowThrow(strength, bounce, squash, wobble) => {
                 crate::window_throw::set(strength, bounce, squash, wobble);
             }
+            Action::SetCursorFx(on, size, sway, blur, bounce, shadow, shadow_dist, shadow_soft) => {
+                crate::cursor_fx::set(crate::cursor_fx::Params {
+                    on,
+                    size,
+                    sway,
+                    blur,
+                    bounce,
+                    shadow,
+                    shadow_dist,
+                    shadow_soft,
+                });
+                self.niri.queue_redraw_all();
+            }
             Action::SetCursorZoom(zoom, ms) => {
                 crate::cursor_zoom::set(zoom, ms, self.niri.clock.now());
                 self.niri.queue_redraw_all();
@@ -3389,6 +3402,11 @@ impl State {
         let button_code = event.button_code();
 
         let button_state = event.state();
+        // angel-niri: the living pointer dips and rings on a click (cursor_fx)
+        if crate::cursor_fx::is_on() {
+            crate::cursor_fx::button(ButtonState::Pressed == button_state, self.niri.clock.now());
+            self.niri.queue_redraw_all();
+        }
 
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
 

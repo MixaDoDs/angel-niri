@@ -745,6 +745,45 @@ pub enum Action {
         #[serde(default = "default_window_pulse_ms")]
         ms: u32,
     },
+    /// A living pointer (angel-niri).
+    ///
+    /// The pointer leans into its motion and swings back when it stops, dips on a click with a
+    /// ring spreading from the tip, smears when it flies and floats over a soft shadow; `size`
+    /// draws it bigger. The tip itself is never delayed. `false` draws it as before.
+    #[cfg_attr(feature = "clap", clap(about = "Animate the pointer"))]
+    SetCursorFx {
+        /// On or off.
+        #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
+        on: bool,
+        /// How many times bigger the pointer is drawn, 0.5 to 4.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        size: f64,
+        /// Lean into motion, 0 to 3 (1 = normal).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        sway: f64,
+        /// Motion smear, 0 to 3.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        blur: f64,
+        /// Click dip and ring, 0 to 3 (0 = none).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        bounce: f64,
+        /// Shadow, 0 to 3 (0 = none).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        shadow: f64,
+        /// How far the shadow falls, 0 to 3 (1 = as in the reference).
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        shadow_dist: f64,
+        /// How soft the shadow is, 0.2 to 4.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        shadow_soft: f64,
+    },
     /// Turn on pixel window shadows (angel-niri).
     ///
     /// Windows get the layout's shadow drawn as dithered dots of `pixel` logical pixels instead
@@ -2939,6 +2978,10 @@ fn default_true() -> bool {
 
 fn default_desk_throw_strength() -> u8 {
     1
+}
+
+fn default_cursor_fx_one() -> f64 {
+    1.
 }
 
 fn default_cursor_zoom_ms() -> u32 {

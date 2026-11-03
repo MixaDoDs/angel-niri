@@ -1808,6 +1808,7 @@ impl State {
                 .cursor_manager
                 .reload(&config.cursor.xcursor_theme, config.cursor.xcursor_size);
             self.niri.cursor_texture_cache.clear();
+            crate::cursor_fx::clear_cache();
         }
 
         if config.debug.nested_show_host_cursor != old_config.debug.nested_show_host_cursor {
@@ -4198,6 +4199,43 @@ impl Niri {
             };
         }
 
+        // angel-niri: the living pointer (cursor_fx): what it does this frame
+        let living = crate::cursor_fx::update(
+            self.clock.now(),
+            pointer_pos + output_pos.to_f64(),
+            match &render_cursor {
+                RenderCursor::Named { icon, .. } => Some(*icon),
+                _ => None,
+            },
+            !matches!(render_cursor, RenderCursor::Hidden),
+        );
+        let mut living_shadow: Option<(crate::cursor_fx::Frame, (f64, f64, f32))> = None;
+        let mut living_height = 0.;
+
+        fn put<R: NiriRenderer, F: FnMut(PointerRenderElements<R>) + ?Sized>(
+            renderer: &mut R,
+            push: &mut F,
+            at: Point<f64, Logical>,
+            scale: Scale<f64>,
+            buf: &smithay::backend::renderer::element::memory::MemoryRenderBuffer,
+            alpha: f32,
+            kind: Kind,
+        ) {
+            let at: Point<i32, Physical> = at.to_physical_precise_round(scale);
+            match MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                at.to_f64(),
+                buf,
+                Some(alpha),
+                None,
+                None,
+                kind,
+            ) {
+                Ok(element) => push(element.into()),
+                Err(err) => warn!("error importing a cursor_fx texture: {err:?}"),
+            }
+        }
+
         match render_cursor {
             RenderCursor::Hidden => (),
             RenderCursor::Surface { surface, hotspot } => {
@@ -4220,35 +4258,88 @@ impl Niri {
                 cursor,
             } => {
                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
-                let (texture, fx, fy) = if zoomed {
-                    self.cursor_texture_cache
-                        .get_zoomed(icon, scale, &cursor, idx, zoom)
-                } else {
-                    (
-                        self.cursor_texture_cache.get(icon, scale, &cursor, idx),
-                        1.,
-                        1.,
-                    )
-                };
-                let hot = XCursor::hotspot(frame);
-                let hotspot: Point<f64, Logical> =
-                    Point::<f64, Physical>::from((f64::from(hot.x) * fx, f64::from(hot.y) * fy))
-                        .to_logical(f64::from(scale));
-                let pointer_pos = (pointer_pos - hotspot).to_physical_precise_round(output_scale);
-
-                match MemoryRenderBufferRenderElement::from_buffer(
-                    renderer,
-                    pointer_pos,
-                    &texture,
-                    None,
-                    None,
-                    None,
-                    Kind::Cursor,
-                ) {
-                    Ok(element) => push(element.into()),
-                    Err(err) => {
-                        warn!("error importing a cursor texture: {err:?}");
+                if let Some(lfx) = living.as_ref().filter(|_| !zoomed) {
+                    // angel-niri: the living pointer (cursor_fx): turned and scaled about the
+                    // tip, smeared back along its path, its shadow drawn last (underneath)
+                    let f = crate::cursor_fx::frame(icon, scale, &cursor, idx, lfx);
+                    put(renderer, push, pointer_pos - f.hot, output_scale, &f.buf, 1., Kind::Cursor);
+                    let (sx, sy) = lfx.streak;
+                    let len = sx.hypot(sy);
+                    if len > 3. {
+                        let n = ((len / 4.).ceil() as usize)
+                            .clamp(2, crate::cursor_fx::BLUR_MAX_COPIES);
+                        for i in 1..=n {
+                            let t = i as f64 / n as f64;
+                            let a = (0.42 * (1. - t) + 0.06) as f32;
+                            let at = pointer_pos - Point::from((sx * t, sy * t)) - f.hot;
+                            put(renderer, push, at, output_scale, &f.buf, a, Kind::Unspecified);
+                        }
                     }
+                    living_height = f.height;
+                    if lfx.shadow_on {
+                        living_shadow = Some((f, lfx.shadow));
+                    }
+                } else {
+                    let (texture, fx, fy) = if zoomed {
+                        self.cursor_texture_cache
+                            .get_zoomed(icon, scale, &cursor, idx, zoom)
+                    } else {
+                        (
+                            self.cursor_texture_cache.get(icon, scale, &cursor, idx),
+                            1.,
+                            1.,
+                        )
+                    };
+                    let hot = XCursor::hotspot(frame);
+                    let hotspot: Point<f64, Logical> = Point::<f64, Physical>::from((
+                        f64::from(hot.x) * fx,
+                        f64::from(hot.y) * fy,
+                    ))
+                    .to_logical(f64::from(scale));
+                    let pointer_pos =
+                        (pointer_pos - hotspot).to_physical_precise_round(output_scale);
+
+                    match MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        pointer_pos,
+                        &texture,
+                        None,
+                        None,
+                        None,
+                        Kind::Cursor,
+                    ) {
+                        Ok(element) => push(element.into()),
+                        Err(err) => {
+                            warn!("error importing a cursor texture: {err:?}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // angel-niri: the living pointer's rings, then its shadow (underneath everything)
+        if let Some(lfx) = living.as_ref() {
+            let h = if living_height > 0. {
+                living_height
+            } else {
+                24. * lfx.size
+            };
+            for (at, t) in &lfx.ripples {
+                let (buf, c, a) = crate::cursor_fx::ring(cursor_scale, h, *t);
+                let local = *at - output_pos.to_f64() - Point::from((c, c));
+                put(renderer, push, local, output_scale, &buf, a, Kind::Unspecified);
+            }
+            if let Some((f, (ox, oy, a))) = living_shadow {
+                let at =
+                    pointer_pos - f.shadow_hot + Point::from((ox * f.height, oy * f.height));
+                // smeared with the arrow when it flies: a few copies back along its path
+                let (sx, sy) = lfx.streak;
+                let n = if sx.hypot(sy) > 3. { 3 } else { 1 };
+                for i in 0..n {
+                    let t = i as f64 / n as f64;
+                    let a = if n == 1 { a } else { a * (0.62 - 0.12 * i as f32) };
+                    let at = at - Point::from((sx * t, sy * t));
+                    put(renderer, push, at, output_scale, &f.shadow, a, Kind::Unspecified);
                 }
             }
         }
@@ -5225,6 +5316,8 @@ impl Niri {
             state.unfinished_animations_remain |= crate::cursor_zoom::animating(self.clock.now());
             // …or the windows spring to the music (angel-niri window_pulse)
             state.unfinished_animations_remain |= crate::window_pulse::animating(self.clock.now());
+            // …or living (angel-niri cursor_fx)
+            state.unfinished_animations_remain |= crate::cursor_fx::animating(self.clock.now());
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {

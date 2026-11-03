@@ -359,6 +359,9 @@ pub enum Action {
     #[knuffel(skip)]
     WindowPulse(f64, u32),
     #[knuffel(skip)]
+    /// on, size, sway, blur, bounce, shadow, shadow distance, shadow softness
+    SetCursorFx(bool, f64, f64, f64, f64, f64, f64, f64),
+    #[knuffel(skip)]
     /// strength, bounce, squash, wobble
     SetWindowThrow(f64, f64, f64, f64),
     #[knuffel(skip)]
@@ -733,6 +736,16 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::SetPixelShadow { pixel } => Self::SetPixelShadow(pixel),
             niri_ipc::Action::SetCursorZoom { zoom, ms } => Self::SetCursorZoom(zoom, ms),
             niri_ipc::Action::WindowPulse { px, ms } => Self::WindowPulse(px, ms),
+            niri_ipc::Action::SetCursorFx {
+                on,
+                size,
+                sway,
+                blur,
+                bounce,
+                shadow,
+                shadow_dist,
+                shadow_soft,
+            } => Self::SetCursorFx(on, size, sway, blur, bounce, shadow, shadow_dist, shadow_soft),
             niri_ipc::Action::SetWindowThrow {
                 strength,
                 bounce,
