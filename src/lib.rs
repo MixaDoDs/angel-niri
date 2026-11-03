@@ -25,7 +25,6 @@ pub mod handlers;
 pub mod inactive_dim;
 pub mod input;
 pub mod ipc;
-pub mod latency;
 pub mod layer;
 pub mod layout;
 pub mod minimize;

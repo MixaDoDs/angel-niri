@@ -403,20 +403,6 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         on: bool,
     },
-    /// Compose each frame as late as its VBlank allows, for less input lag (angel-niri).
-    ///
-    /// On by default: a queued redraw waits until just before the VBlank, learning how long redraws
-    /// take and backing off on misses. Only on a real display, not with VRR or tearing.
-    #[cfg_attr(
-        feature = "clap",
-        clap(about = "Compose each frame as late as its VBlank allows")
-    )]
-    SetLateCompose {
-        /// Late (`true`, the default) or at once, as stock niri.
-        #[serde(default = "default_true")]
-        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
-        on: bool,
-    },
     /// Keep a clean desk above the first one, numbered 0 (angel-niri).
     ///
     /// On, every monitor keeps an empty workspace above its first one; a window put there makes
