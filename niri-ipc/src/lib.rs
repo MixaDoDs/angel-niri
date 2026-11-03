@@ -784,6 +784,31 @@ pub enum Action {
         #[serde(default = "default_cursor_fx_one")]
         shadow_soft: f64,
     },
+    /// Set up the camera that follows the pointer (angel-niri).
+    ///
+    /// `allowed` false keeps it out (and takes it out); `zoom` is how close it comes, `smooth`
+    /// how slowly it glides (1 = as Recordly), `blur` how much a fast pan or the zoom smears.
+    #[cfg_attr(feature = "clap", clap(about = "Set up the camera that follows the pointer"))]
+    SetCursorCamera {
+        /// May it zoom in at all.
+        #[cfg_attr(feature = "clap", arg(action = clap::ArgAction::Set))]
+        allowed: bool,
+        /// How close, 1.1 to 5.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.8))]
+        #[serde(default = "default_cursor_camera_zoom")]
+        zoom: f64,
+        /// How slowly it glides, 0.3 to 3.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        smooth: f64,
+        /// Smear of fast pans and of the zoom, 0 to 3.
+        #[cfg_attr(feature = "clap", arg(long, default_value_t = 1.))]
+        #[serde(default = "default_cursor_fx_one")]
+        blur: f64,
+    },
+    /// Zoom the screen in on the pointer and follow it, or back out (angel-niri).
+    #[cfg_attr(feature = "clap", clap(about = "Zoom in on the pointer and follow it, or back out"))]
+    ToggleCursorCamera {},
     /// Turn on pixel window shadows (angel-niri).
     ///
     /// Windows get the layout's shadow drawn as dithered dots of `pixel` logical pixels instead
@@ -2978,6 +3003,10 @@ fn default_true() -> bool {
 
 fn default_desk_throw_strength() -> u8 {
     1
+}
+
+fn default_cursor_camera_zoom() -> f64 {
+    1.8
 }
 
 fn default_cursor_fx_one() -> f64 {

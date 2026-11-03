@@ -10,6 +10,7 @@ pub mod cast_pause;
 pub mod cli;
 pub mod clipboard_keep;
 pub mod cursor;
+pub mod camera;
 pub mod cursor_fx;
 pub mod cursor_zoom;
 #[cfg(feature = "dbus")]

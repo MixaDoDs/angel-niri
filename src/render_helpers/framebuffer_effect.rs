@@ -41,6 +41,8 @@ pub struct FramebufferEffectElement {
     saturation: f32,
     /// angel-niri (desk_throw.rs): drawn broken instead (shaders/glitch.frag).
     glitch: Option<crate::desk_throw::GlitchFrame>,
+    /// angel-niri (camera.rs): drawn through the camera instead (shaders/camera.frag).
+    camera: Option<crate::camera::Frame>,
 }
 
 #[derive(Debug)]
@@ -97,6 +99,7 @@ impl FramebufferEffect {
             noise,
             saturation,
             glitch: None,
+            camera: None,
         }
     }
 
@@ -121,6 +124,32 @@ impl FramebufferEffect {
             noise: 0.,
             saturation: 1.,
             glitch: Some(glitch),
+            camera: None,
+        }
+    }
+
+    /// angel-niri (camera.rs): the frame under `geometry` (a whole output, logical) seen through
+    /// the camera; damaged every time.
+    pub fn render_camera(
+        &mut self,
+        geometry: Rectangle<f64, Logical>,
+        scale: f64,
+        camera: crate::camera::Frame,
+    ) -> FramebufferEffectElement {
+        self.commit.increment();
+        FramebufferEffectElement {
+            id: self.id.clone(),
+            commit: self.commit,
+            geometry,
+            clip_geo: geometry,
+            corner_radius: CornerRadius::default(),
+            subregion: None,
+            scale: scale as f32,
+            blur_options: None,
+            noise: 0.,
+            saturation: 1.,
+            glitch: None,
+            camera: Some(camera),
         }
     }
 }
@@ -517,6 +546,57 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             src_loc + clamp_offset.to_f64().upscale(dst_to_src).to_logical(1.),
             clamped_dst.size.to_f64().upscale(dst_to_src).to_logical(1.),
         );
+
+        if let Some(cam) = self.camera {
+            let program = Shaders::get_from_frame(frame).camera.clone();
+            let scale = f64::from(self.scale);
+            let screen = [
+                (self.geometry.size.w * scale) as f32,
+                (self.geometry.size.h * scale) as f32,
+            ];
+            let tex_to_screen = Mat3::from_translation(Vec2::new(0.5, 0.5))
+                * frame.transformation().matrix()
+                * Mat3::from_translation(Vec2::new(-0.5, -0.5));
+            // the smear in physical px, and how many taps it needs (one per ~3 px on screen)
+            let smear = (cam.smear.0 * scale, cam.smear.1 * scale);
+            let along = smear.0.hypot(smear.1) * cam.zoom;
+            let outward = cam.radial.abs() * f64::from(screen[0].max(screen[1])) * 0.5;
+            let taps = (along.max(outward) / 3.).ceil().clamp(1., 13.);
+            let taps = if taps < 2. { 1. } else { taps };
+            let uniforms = [
+                Uniform::new("g_screen", screen),
+                mat3_uniform("g_tex_to_screen", tex_to_screen),
+                mat3_uniform("g_screen_to_tex", tex_to_screen.inverse()),
+                Uniform::new(
+                    "g_view",
+                    [
+                        (cam.focus.x * scale) as f32,
+                        (cam.focus.y * scale) as f32,
+                        cam.zoom as f32,
+                        taps as f32,
+                    ],
+                ),
+                Uniform::new(
+                    "g_smear",
+                    [smear.0 as f32, smear.1 as f32, cam.radial as f32, 0.],
+                ),
+            ];
+            return frame.render_texture_from_to(
+                texture,
+                Rectangle::from_size(texture.size().to_f64()),
+                clamped_dst,
+                damage,
+                &[],
+                frame.transformation().invert(),
+                1.,
+                program.as_ref(),
+                if program.is_some() {
+                    &uniforms[..]
+                } else {
+                    &[]
+                },
+            );
+        }
 
         if let Some(glitch) = self.glitch {
             let program = Shaders::get_from_frame(frame).glitch.clone();

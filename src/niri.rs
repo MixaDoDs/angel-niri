@@ -573,6 +573,8 @@ pub struct OutputState {
     screen_transition: Option<ScreenTransition>,
     /// angel-niri (desk_throw.rs): the broken screen drawn over the finished frame.
     glitch_fx: RefCell<FramebufferEffect>,
+    /// angel-niri (camera.rs): the frame seen through the camera that follows the pointer.
+    camera_fx: RefCell<FramebufferEffect>,
     /// Damage tracker used for the debug damage visualization.
     pub debug_damage_tracker: OutputDamageTracker,
     /// angel-niri (game.rs): when the last redraw began, and until when a background output's
@@ -3331,6 +3333,7 @@ impl Niri {
             lock_color_buffer: SolidColorBuffer::new(size, CLEAR_COLOR_LOCKED),
             screen_transition: None,
             glitch_fx: RefCell::new(FramebufferEffect::new()),
+            camera_fx: RefCell::new(FramebufferEffect::new()),
             debug_damage_tracker: OutputDamageTracker::from_output(&output),
             last_redraw_at: None,
             background_until: None,
@@ -4177,6 +4180,9 @@ impl Niri {
             .tablet_cursor_location
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
         let pointer_pos = pointer_pos - output_pos.to_f64();
+        // angel-niri (camera.rs): through the camera the pointer is where its spot shows
+        let camera = crate::camera::current(&output.name());
+        let pointer_pos = camera.map_or(pointer_pos, |cam| cam.to_screen(pointer_pos));
 
         // Get the render cursor to draw.
         let cursor_scale = output_scale.integer_scale();
@@ -4209,6 +4215,13 @@ impl Niri {
             },
             !matches!(render_cursor, RenderCursor::Hidden),
         );
+        // …and a little bigger with the zoom
+        let living = living.map(|mut fx| {
+            if let Some(cam) = camera {
+                fx.size *= cam.pointer_grow();
+            }
+            fx
+        });
         let mut living_shadow: Option<(crate::cursor_fx::Frame, (f64, f64, f32))> = None;
         let mut living_height = 0.;
 
@@ -4852,6 +4865,19 @@ impl Niri {
             push
         };
 
+        // angel-niri (camera.rs): the screen zoomed in on the pointer and following it; worked out
+        // first, the pointer is drawn where its spot shows
+        let camera = self.global_space.output_geometry(output).and_then(|out_geo| {
+            let ptr = self.seat.get_pointer().unwrap().current_location();
+            let inside = out_geo.to_f64().contains(ptr);
+            crate::camera::update(
+                &output.name(),
+                self.clock.now(),
+                inside.then(|| ptr - out_geo.loc.to_f64()),
+                output_size(output),
+            )
+        });
+
         // angel-niri (desk_throw.rs): a broken screen over everything, the pointer too: it sinks
         // into the dead zone like the rest of the picture (the backend keeps it off the cursor
         // plane meanwhile, see `desk_throw::glitch_at` in tty.rs)
@@ -4865,6 +4891,14 @@ impl Niri {
         // The pointer goes on the top.
         if include_pointer && self.pointer_visibility.is_visible() {
             self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
+        }
+
+        // angel-niri (camera.rs): under the pointer, over everything else: the finished frame
+        // seen through the camera
+        if let Some(cam) = camera {
+            let geometry = Rectangle::from_size(output_size(output));
+            let elem = (state.camera_fx.borrow_mut()).render_camera(geometry, output_scale.x, cam);
+            push(elem.into());
         }
 
         // Next, the screen transition texture.
@@ -5318,6 +5352,8 @@ impl Niri {
             state.unfinished_animations_remain |= crate::window_pulse::animating(self.clock.now());
             // …or living (angel-niri cursor_fx)
             state.unfinished_animations_remain |= crate::cursor_fx::animating(self.clock.now());
+            // …or the camera gliding (angel-niri camera.rs)
+            state.unfinished_animations_remain |= crate::camera::animating();
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {

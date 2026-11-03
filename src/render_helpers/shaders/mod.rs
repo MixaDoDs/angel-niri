@@ -24,6 +24,8 @@ pub struct Shaders {
     pub nearest: Option<GlesTexProgram>,
     /// angel-niri (desk_throw.rs)
     pub glitch: Option<GlesTexProgram>,
+    /// angel-niri (camera.rs)
+    pub camera: Option<GlesTexProgram>,
     pub blur: Option<BlurProgram>,
     pub custom_resize: RefCell<Option<ShaderProgram>>,
     pub custom_close: RefCell<Option<ShaderProgram>>,
@@ -238,6 +240,22 @@ impl Shaders {
             })
             .ok();
 
+        let camera = renderer
+            .compile_custom_texture_shader(
+                include_str!("camera.frag"),
+                &[
+                    UniformName::new("g_screen", UniformType::_2f),
+                    UniformName::new("g_tex_to_screen", UniformType::Matrix3x3),
+                    UniformName::new("g_screen_to_tex", UniformType::Matrix3x3),
+                    UniformName::new("g_view", UniformType::_4f),
+                    UniformName::new("g_smear", UniformType::_4f),
+                ],
+            )
+            .map_err(|err| {
+                warn!("error compiling camera shader: {err:?}");
+            })
+            .ok();
+
         let blur = BlurProgram::compile(renderer)
             .map_err(|err| {
                 warn!("error compiling blur shaders: {err:?}");
@@ -255,6 +273,7 @@ impl Shaders {
             gradient_fade,
             nearest,
             glitch,
+            camera,
             blur,
             custom_resize: RefCell::new(None),
             custom_close: RefCell::new(None),

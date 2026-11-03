@@ -1113,6 +1113,19 @@ impl State {
                 });
                 self.niri.queue_redraw_all();
             }
+            Action::SetCursorCamera(allowed, zoom, smooth, blur) => {
+                crate::camera::set(crate::camera::Params {
+                    allowed,
+                    zoom,
+                    smooth,
+                    blur,
+                });
+                self.niri.queue_redraw_all();
+            }
+            Action::ToggleCursorCamera => {
+                crate::camera::toggle();
+                self.niri.queue_redraw_all();
+            }
             Action::SetCursorZoom(zoom, ms) => {
                 crate::cursor_zoom::set(zoom, ms, self.niri.clock.now());
                 self.niri.queue_redraw_all();
