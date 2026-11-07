@@ -381,6 +381,9 @@ pub struct Niri {
     pub suppressed_keys: HashSet<Keycode>,
     /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
+    /// angel-niri: when a button or a finger last went down outside any window (the bar, the
+    /// tray, a notification): what an activation token with an invalid serial must follow.
+    pub last_press_off_windows: Option<Duration>,
     /// Binds whose release action is pending, keyed by the key code.
     pub pending_release_binds: HashMap<Keycode, Bind>,
     /// Same as `pending_release_binds`, but for mouse buttons, keyed by the button code.
@@ -2995,6 +2998,7 @@ impl Niri {
             popup_grab: None,
             suppressed_keys: HashSet::new(),
             suppressed_buttons: HashSet::new(),
+            last_press_off_windows: None,
             pending_release_binds: HashMap::new(),
             pending_mouse_release_binds: HashMap::new(),
             pending_tablet_release_binds: HashMap::new(),

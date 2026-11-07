@@ -3515,6 +3515,10 @@ impl State {
         if ButtonState::Pressed == button_state {
             self.niri.cancel_interrupted_release_binds();
 
+            if self.niri.contents_under(pointer.current_location()).window.is_none() {
+                self.niri.last_press_off_windows = Some(get_monotonic_time());
+            }
+
             let mut is_mru_open = false;
             if let Some(mru_output) = self.niri.window_mru_ui.output() {
                 is_mru_open = true;
@@ -5027,6 +5031,9 @@ impl State {
         let serial = SERIAL_COUNTER.next_serial();
 
         let under = self.niri.contents_under(pos);
+        if under.window.is_none() {
+            self.niri.last_press_off_windows = Some(get_monotonic_time());
+        }
 
         let mod_key = self.backend.mod_key(&self.niri.config.borrow());
         let mods = self.niri.seat.get_keyboard().unwrap().modifier_state();

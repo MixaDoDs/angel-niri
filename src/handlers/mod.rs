@@ -83,7 +83,7 @@ use crate::protocols::gamma_control::{GammaControlHandler, GammaControlManagerSt
 use crate::protocols::mutter_x11_interop::MutterX11InteropHandler;
 use crate::protocols::output_management::{OutputManagementHandler, OutputManagementManagerState};
 use crate::protocols::screencopy::{Screencopy, ScreencopyHandler, ScreencopyManagerState};
-use crate::utils::{output_size, send_scale_transform};
+use crate::utils::{get_monotonic_time, output_size, send_scale_transform};
 
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -773,6 +773,14 @@ impl GammaControlHandler for State {
 
 struct UrgentOnlyMarker;
 
+/// How long after a click outside the windows a token with an invalid serial still activates (a
+/// messenger asleep in the tray takes a while to show its window).
+const INVALID_SERIAL_GRACE: Duration = Duration::from_secs(5);
+
+fn honor_invalid_serial(last_press_off_windows: Option<Duration>, now: Duration) -> bool {
+    last_press_off_windows.is_some_and(|t| now.saturating_sub(t) <= INVALID_SERIAL_GRACE)
+}
+
 impl XdgActivationHandler for State {
     fn activation_state(&mut self) -> &mut XdgActivationState {
         &mut self.niri.activation_state
@@ -798,11 +806,6 @@ impl XdgActivationHandler for State {
         // Clicking on a notification sends clients a perfectly valid activation token from the
         // notification daemon, but alas they ignore it. Maybe in the future the clients are fixed,
         // and we can remove this debug flag.
-        let config = self.niri.config.borrow();
-        if config.debug.honor_xdg_activation_with_invalid_serial {
-            return true;
-        }
-
         // Check the serial against both a keyboard and a pointer, since layer-shell surfaces
         // with no keyboard interactivity won't have any keyboard focus.
         let kb_last_enter = seat.get_keyboard().unwrap().last_enter();
@@ -813,6 +816,14 @@ impl XdgActivationHandler for State {
         let pointer_last_enter = seat.get_pointer().unwrap().last_enter();
         if pointer_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
             return true;
+        }
+
+        // angel-niri: the invalid serial is honored only right after a click outside the windows
+        // (a tray icon, a notification: what the flag is for). Otherwise an X11 app through
+        // xwayland-satellite raised itself whenever the pointer crossed it (#157: Spotify sends
+        // _NET_ACTIVE_WINDOW, satellite makes a token with an old serial).
+        if self.niri.config.borrow().debug.honor_xdg_activation_with_invalid_serial {
+            return honor_invalid_serial(self.niri.last_press_off_windows, get_monotonic_time());
         }
 
         false
@@ -872,3 +883,17 @@ impl OutputManagementHandler for State {
 }
 
 impl MutterX11InteropHandler for State {}
+
+#[cfg(test)]
+mod invalid_serial_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_serial_needs_a_recent_click_off_windows() {
+        let t = Duration::from_secs(100);
+        assert!(!honor_invalid_serial(None, t));
+        assert!(honor_invalid_serial(Some(t), t + Duration::from_secs(1)));
+        assert!(honor_invalid_serial(Some(t), t + INVALID_SERIAL_GRACE));
+        assert!(!honor_invalid_serial(Some(t), t + Duration::from_secs(6)));
+    }
+}
