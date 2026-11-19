@@ -37,6 +37,7 @@ use crate::input::pick_window_grab::PickWindowGrab;
 use crate::layout::workspace::WorkspaceId;
 use crate::layout::LayoutElement as _;
 use crate::niri::State;
+use crate::render_helpers::RenderTarget;
 use crate::utils::{version, with_toplevel_role};
 use crate::window::Mapped;
 
@@ -560,6 +561,8 @@ fn make_ipc_window(
         is_floating: mapped.is_floating(),
         is_urgent: mapped.is_urgent(),
         is_minimized: mapped.is_minimized(),
+        block_out_from_screencast: RenderTarget::Screencast
+            .should_block_out(mapped.rules().block_out_from),
         is_shaded: mapped.shaded(),
         is_on_top: mapped.on_top(),
         is_sticky: mapped.sticky(),
@@ -772,6 +775,8 @@ impl State {
             changed |= ipc_win.is_shaded != mapped.shaded()
                 || ipc_win.is_on_top != mapped.on_top()
                 || ipc_win.is_sticky != mapped.sticky()
+                || ipc_win.block_out_from_screencast
+                    != RenderTarget::Screencast.should_block_out(mapped.rules().block_out_from)
                 || ipc_win.has_title_bar
                     != (crate::stacking::on() && mapped.is_floating() && mapped.has_ssd());
 

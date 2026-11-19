@@ -408,6 +408,7 @@ impl CompositorHandler for State {
                         .map(|c| c.serial)
                 });
                 self.niri.layout.update_window(&window, serial);
+                self.niri.queue_redraw_for_window_capture(id);
                 return;
             }
 
@@ -437,8 +438,10 @@ impl CompositorHandler for State {
         // angel-niri: a subsurface commit of a minimized toplevel.
         if let Some(mapped) = self.niri.layout.find_minimized(&root_surface) {
             let window = mapped.window.clone();
+            let id = mapped.id();
             window.on_commit();
             self.niri.layout.update_window(&window, None);
+            self.niri.queue_redraw_for_window_capture(id);
             return;
         }
 

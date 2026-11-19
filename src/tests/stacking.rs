@@ -285,6 +285,33 @@ fn stacking_keeps_the_column_of_a_minimized_window() {
     assert_eq!(columns(&mut f), [vec![a], vec![b], vec![c]]);
 }
 
+#[test]
+fn window_capture_follows_minimized_window_when_its_output_disappears() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.add_output(2, (1280, 720));
+    let client = f.add_client();
+    let window = open(&mut f, client, 100, 100);
+    let (output, mapped) = f
+        .niri()
+        .layout
+        .windows()
+        .find(|(_, m)| m.window == window)
+        .unwrap();
+    let output = output.unwrap().output().clone();
+    let id = mapped.id();
+
+    assert!(f.niri().layout.minimize_window(&window));
+    let (_, capture_output) = f.niri().find_capture_window_by_id(id).unwrap();
+    assert_eq!(capture_output, Some(&output));
+    assert!(f.niri().find_mapped_output_by_id(id).is_none());
+
+    f.niri().remove_output(&output);
+    let (mapped, capture_output) = f.niri().find_capture_window_by_id(id).unwrap();
+    assert!(mapped.is_minimized());
+    assert_ne!(capture_output.unwrap(), &output);
+}
+
 // in Desktop a window going full screen gets a workspace of its own right after its own, the view
 // along; back from full screen it floats on its old workspace again and the other one goes
 #[test]

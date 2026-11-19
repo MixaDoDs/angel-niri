@@ -2264,6 +2264,9 @@ pub struct Window {
     /// A minimized window is out of the layout: it has no workspace. Focusing it brings it back.
     #[serde(default)]
     pub is_minimized: bool,
+    /// Whether niri hides this window's contents from screencasts.
+    #[serde(default)]
+    pub block_out_from_screencast: bool,
     /// Whether this window is rolled up into its title bar (angel-niri, stacking).
     #[serde(default)]
     pub is_shaded: bool,

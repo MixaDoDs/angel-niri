@@ -977,7 +977,7 @@ impl State {
             // in the dmabuf formats or device alone doesn't matter to us here
             // (and if it does, polling is not the way to check for it).
             let constraints = if let Some(id) = image_copy_capture_impl::source_mapped_id(&source) {
-                let Some((mapped, o)) = self.niri.find_mapped_output_by_id(id) else {
+                let Some((mapped, o)) = self.niri.find_capture_window_by_id(id) else {
                     // The window was closed.
                     return false;
                 };
@@ -4092,6 +4092,26 @@ impl Niri {
         Some((mapped, mon.map(|mon| mon.output())))
     }
 
+    pub fn find_capture_window_by_id(&self, id: MappedId) -> Option<(&Mapped, Option<&Output>)> {
+        self.find_mapped_output_by_id(id).or_else(|| {
+            self.layout
+                .find_minimized_with_output(|mapped| mapped.id() == id)
+        })
+    }
+
+    pub fn queue_redraw_for_window_capture(&mut self, id: MappedId) {
+        if !self.image_copy_sessions.iter().any(|session| {
+            session.pending_frame.is_some()
+                && image_copy_capture_impl::source_mapped_id(&session.session.source()) == Some(id)
+        }) {
+            return;
+        }
+
+        if let Some((_, Some(output))) = self.find_capture_window_by_id(id) {
+            self.queue_redraw(&output.clone());
+        }
+    }
+
     pub fn output_for_tablet(&self) -> Option<&Output> {
         let config = self.config.borrow();
         if config.input.tablet.map_to_focused_output {
@@ -6426,7 +6446,7 @@ impl Niri {
             let Some(id) = image_copy_capture_impl::source_mapped_id(&source) else {
                 continue;
             };
-            let Some((mapped, Some(win_output))) = self.find_mapped_output_by_id(id) else {
+            let Some((mapped, Some(win_output))) = self.find_capture_window_by_id(id) else {
                 continue;
             };
             if *win_output != *output {

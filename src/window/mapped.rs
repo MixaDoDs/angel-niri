@@ -451,6 +451,20 @@ impl Mapped {
 
         self.is_window_cast_target = value;
         self.need_to_recompute_rules = true;
+        if self.is_minimized {
+            self.update_toplevel_suspension();
+            self.send_pending_configure();
+        }
+    }
+
+    fn update_toplevel_suspension(&self) {
+        self.toplevel().with_pending_state(|state| {
+            if self.is_minimized && !self.is_window_cast_target {
+                state.states.set(xdg_toplevel::State::Suspended);
+            } else {
+                state.states.unset(xdg_toplevel::State::Suspended);
+            }
+        });
     }
 
     /// Renders a snapshot of the window without popups.
@@ -1134,14 +1148,8 @@ impl LayoutElement for Mapped {
 
     fn set_minimized(&mut self, minimized: bool) {
         self.is_minimized = minimized;
-        // A minimized window is not visible: let it stop drawing.
-        self.toplevel().with_pending_state(|state| {
-            if minimized {
-                state.states.set(xdg_toplevel::State::Suspended);
-            } else {
-                state.states.unset(xdg_toplevel::State::Suspended);
-            }
-        });
+        // A minimized window may stop drawing when nobody is capturing it.
+        self.update_toplevel_suspension();
     }
 
     fn is_minimized(&self) -> bool {

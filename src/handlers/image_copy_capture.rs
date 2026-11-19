@@ -25,9 +25,10 @@ use smithay::wayland::image_copy_capture::{
 use smithay::wayland::shm;
 use wayland_backend::server::Credentials;
 
+use crate::layout::LayoutElement as _;
 use crate::niri::{Niri, State};
-use crate::render_helpers::CaptureBuffer;
-use crate::utils::{get_credentials_for_client, CastSessionId, CastStreamId};
+use crate::render_helpers::{CaptureBuffer, RenderTarget};
+use crate::utils::{get_credentials_for_client, get_monotonic_time, CastSessionId, CastStreamId};
 use crate::window::mapped::{Mapped, MappedId};
 
 /// Output capture session.
@@ -283,7 +284,7 @@ impl ImageCopyCaptureHandler for State {
 
     fn capture_constraints(&mut self, source: &ImageCaptureSource) -> Option<BufferConstraints> {
         if let Some(id) = source_mapped_id(source) {
-            let Some((mapped, Some(output))) = self.niri.find_mapped_output_by_id(id) else {
+            let Some((mapped, Some(output))) = self.niri.find_capture_window_by_id(id) else {
                 return None;
             };
             if !self.niri.output_state.contains_key(output) {
@@ -387,8 +388,29 @@ impl ImageCopyCaptureHandler for State {
         s.pending_frame = Some(frame);
         s.frames_requested = s.frames_requested.saturating_add(1);
 
+        let source = session.source();
+        let output = if let Some(id) = source_mapped_id(&source) {
+            let Some((mapped, Some(output))) = self.niri.find_capture_window_by_id(id) else {
+                return;
+            };
+            // Only requests for a captured minimized window may wake its client.
+            // The same throttle applies if multiple sessions request that window.
+            if mapped.is_minimized()
+                && !RenderTarget::ScreenCapture.should_block_out(mapped.rules().block_out_from)
+            {
+                mapped.window.send_frame(
+                    output,
+                    get_monotonic_time(),
+                    Some(Duration::from_millis(100)),
+                    |_, _| None,
+                );
+            }
+            Some(output.clone())
+        } else {
+            source_output(&source)
+        };
         // The frame is captured on the next redraw with damage.
-        if let Some(output) = source_session_output(&self.niri, &session.source()) {
+        if let Some(output) = output {
             // The output may be gone already (the global lingers).
             if self.niri.output_exists(&output) {
                 self.niri.queue_redraw(&output);

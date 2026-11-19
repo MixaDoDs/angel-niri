@@ -5620,6 +5620,27 @@ impl<W: LayoutElement> Layout<W> {
             .find(|win| win.is_wl_surface(wl_surface))
     }
 
+    pub fn find_minimized_with_output(
+        &self,
+        mut matches: impl FnMut(&W) -> bool,
+    ) -> Option<(&W, Option<&Output>)> {
+        let min = self
+            .minimized
+            .iter()
+            .find(|min| matches(min.removed.tile.window()))?;
+        let output = self
+            .find_workspace_by_id(min.workspace_id)
+            .and_then(|(_, ws)| ws.current_output())
+            .or_else(|| {
+                let name = min.output_name.as_ref()?;
+                self.monitors()
+                    .find(|mon| mon.output_name() == name)
+                    .map(|mon| mon.output())
+            })
+            .or_else(|| self.active_output());
+        Some((min.removed.tile.window(), output))
+    }
+
     pub fn find_minimized_mut(&mut self, wl_surface: &WlSurface) -> Option<&mut W> {
         self.minimized
             .iter_mut()
