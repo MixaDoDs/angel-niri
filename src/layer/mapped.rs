@@ -179,7 +179,7 @@ impl MappedLayer {
             return Point::from((0., 0.));
         }
 
-        let y = baba_is_float_offset(self.clock.now(), self.view_size.h);
+        let y = baba_is_float_offset(self.clock.now_unadjusted(), self.view_size.h);
         let y = round_logical_in_physical(self.scale, y);
         Point::from((0., y))
     }
@@ -192,8 +192,10 @@ impl MappedLayer {
         xray_pos: XrayPos,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
-        // angel-niri (cast_only.rs): a layer for the viewers only
-        if crate::cast_only::hides(self.surface.namespace(), ctx.target) {
+        // Apply both upstream capture blocking and angel-niri's viewer-only layers.
+        if ctx.target.should_hide(self.rules.block_out_from)
+            || crate::cast_only::hides(self.surface.namespace(), ctx.target)
+        {
             return;
         }
 

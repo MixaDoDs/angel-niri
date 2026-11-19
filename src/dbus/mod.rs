@@ -6,7 +6,6 @@ use zbus::names::{UniqueName, WellKnownName};
 use zbus::object_server::Interface;
 use zbus::zvariant::NoneValue as _;
 
-use crate::dbus::gnome_shell::Shell;
 use crate::niri::State;
 
 pub mod freedesktop_a11y;
@@ -117,7 +116,7 @@ impl DBusServers {
                     calloop::channel::Event::Closed => (),
                 })
                 .unwrap();
-            let shell = Shell::new(to_niri);
+            let shell = gnome_shell::Shell::new(to_niri);
             if let Some(x) = try_start(shell.clone(), is_session_instance) {
                 dbus.conn_gnome_shell = Some(x);
                 niri.gnome_shell = Some(shell);

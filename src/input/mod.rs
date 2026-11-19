@@ -20,6 +20,7 @@ use smithay::backend::input::{
     TabletToolTipState, TouchEvent,
 };
 use smithay::backend::libinput::LibinputInputBackend;
+use smithay::desktop::layer_map_for_output;
 use smithay::input::dnd::DnDGrab;
 use smithay::input::keyboard::{keysyms, KeyboardSource, Keysym, Layout, ModifiersState};
 use smithay::input::pointer::{
@@ -40,6 +41,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle, Transform, SERIAL_COUNTER};
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint};
+use smithay::wayland::shell::wlr_layer::{self, Layer};
 use smithay::wayland::virtual_keyboard::VirtualKeyboardDevice;
 use touch_overview_grab::TouchOverviewGrab;
 
@@ -148,6 +150,25 @@ enum ShouldInterceptResult {
     InterceptAndHandle(Bind),
     /// Do not forward the event, and do nothing else.
     InterceptOnly,
+}
+
+impl ShouldInterceptResult {
+    pub fn should_forward(&self) -> bool {
+        match self {
+            ShouldInterceptResult::Forward | ShouldInterceptResult::ForwardAndHandle(_) => true,
+            ShouldInterceptResult::InterceptAndHandle(_) | ShouldInterceptResult::InterceptOnly => {
+                false
+            }
+        }
+    }
+
+    pub fn into_bind(self) -> Option<Bind> {
+        match self {
+            ShouldInterceptResult::ForwardAndHandle(bind)
+            | ShouldInterceptResult::InterceptAndHandle(bind) => Some(bind),
+            ShouldInterceptResult::Forward | ShouldInterceptResult::InterceptOnly => None,
+        }
+    }
 }
 
 impl State {
@@ -718,10 +739,16 @@ impl State {
                     )
                 };
 
-                if matches!(
-                    res,
-                    ShouldInterceptResult::Forward | ShouldInterceptResult::ForwardAndHandle(_)
-                ) {
+                if res.should_forward() {
+                    if pressed && this.handle_focus_on_type_in_overview(modified) {
+                        // Update keyboard focus right away so that input_forward() below
+                        // sends the key to this newly focused surface.
+                        //
+                        // In case of track-layout "window", this will also switch to the target
+                        // layout before forwarding the key.
+                        this.update_keyboard_focus();
+                    }
+
                     // Interaction with the active window, immediately update the active window's
                     // focus timestamp without waiting for a possible pending MRU lock-in delay.
                     this.niri.mru_apply_keyboard_commit();
@@ -733,35 +760,26 @@ impl State {
             return;
         };
 
-        // Forward the event to the client, unless the key was intercepted.
-        match &result {
-            ShouldInterceptResult::Forward | ShouldInterceptResult::ForwardAndHandle(_) => {
-                keyboard.input_forward(
-                    self,
-                    event.key_code(),
-                    event.state(),
-                    serial,
-                    time,
-                    mods_changed,
-                );
-            }
-            ShouldInterceptResult::InterceptAndHandle(_) | ShouldInterceptResult::InterceptOnly => {
-                if mods_changed {
-                    keyboard.advertise_modifier_state(self);
-                }
-            }
+        if result.should_forward() {
+            // Forward the key to client.
+            keyboard.input_forward(
+                self,
+                event.key_code(),
+                event.state(),
+                serial,
+                time,
+                mods_changed,
+            );
+        } else if mods_changed {
+            keyboard.advertise_modifier_state(self);
         }
 
         // Handle the bind, if the result came with one.
-        match result {
-            ShouldInterceptResult::ForwardAndHandle(bind)
-            | ShouldInterceptResult::InterceptAndHandle(bind) => {
-                if pressed && bind.repeat {
-                    self.start_key_repeat(bind.clone());
-                }
-                self.handle_bind(bind, pressed, time);
+        if let Some(bind) = result.into_bind() {
+            if pressed && bind.repeat {
+                self.start_key_repeat(bind.clone());
             }
-            ShouldInterceptResult::Forward | ShouldInterceptResult::InterceptOnly => {}
+            self.handle_bind(bind, pressed, time);
         }
     }
 
@@ -824,7 +842,7 @@ impl State {
         self.niri.queue_redraw_all();
     }
 
-    pub fn handle_bind(&mut self, bind: Bind, pressed: bool, input_time: InputTime) {
+    pub fn handle_bind(&mut self, bind: Bind, pressed: bool, time: InputTime) {
         let allowed_when_locked = bind_allowed_when_locked(&bind, pressed);
         let allowed_during_screenshot = bind_allowed_during_screenshot(&bind, pressed);
 
@@ -866,11 +884,11 @@ impl State {
             return;
         };
 
-        self.do_action(action, allowed_when_locked, input_time);
+        self.do_action(action, allowed_when_locked, time);
     }
 
     /// Forgets all held inputs, running the release actions of anything that was still held.
-    pub fn release_held_inputs(&mut self, input_time: InputTime) {
+    pub fn release_held_inputs(&mut self, time: InputTime) {
         let mut binds = Vec::new();
         binds.extend(
             self.niri
@@ -895,11 +913,11 @@ impl State {
         self.niri.clear_input_state();
 
         for bind in binds {
-            self.handle_bind(bind, false, input_time);
+            self.handle_bind(bind, false, time);
         }
     }
 
-    pub fn do_action(&mut self, action: Action, allow_when_locked: bool, input_time: InputTime) {
+    pub fn do_action(&mut self, action: Action, allow_when_locked: bool, time: InputTime) {
         if self.niri.is_locked() && !(allow_when_locked || allowed_when_locked(&action)) {
             return;
         }
@@ -921,14 +939,14 @@ impl State {
             Action::ChangeVt(vt) => {
                 // Changing VT may not deliver the key releases, so treat the held binds as
                 // released while the session is still usable.
-                self.release_held_inputs(input_time);
+                self.release_held_inputs(time);
 
                 self.backend.change_vt(vt as i32);
             }
             Action::Suspend => {
                 // Suspend may not deliver the key releases, so treat the held binds as
                 // released before suspending.
-                self.release_held_inputs(input_time);
+                self.release_held_inputs(time);
 
                 self.backend.suspend();
             }
@@ -1533,36 +1551,36 @@ impl State {
                     }
                 });
             }
-            Action::MoveColumnLeft => {
+            Action::MoveColumnLeft(focus) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.move_left();
                 } else {
-                    self.niri.layout.move_left();
+                    self.niri.layout.move_left(focus);
                     self.maybe_warp_cursor_to_focus();
                 }
 
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::MoveColumnRight => {
+            Action::MoveColumnRight(focus) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.move_right();
                 } else {
-                    self.niri.layout.move_right();
+                    self.niri.layout.move_right(focus);
                     self.maybe_warp_cursor_to_focus();
                 }
 
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::MoveColumnToFirst => {
-                self.niri.layout.move_column_to_first();
+            Action::MoveColumnToFirst(focus) => {
+                self.niri.layout.move_column_to_first(focus);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::MoveColumnToLast => {
-                self.niri.layout.move_column_to_last();
+            Action::MoveColumnToLast(focus) => {
+                self.niri.layout.move_column_to_last(focus);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();
@@ -1579,7 +1597,7 @@ impl State {
                         self.maybe_warp_cursor_to_focus();
                     }
                 } else {
-                    self.niri.layout.move_left();
+                    self.niri.layout.move_left(true);
                     self.maybe_warp_cursor_to_focus();
                 }
 
@@ -1598,29 +1616,29 @@ impl State {
                         self.maybe_warp_cursor_to_focus();
                     }
                 } else {
-                    self.niri.layout.move_right();
+                    self.niri.layout.move_right(true);
                     self.maybe_warp_cursor_to_focus();
                 }
 
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::MoveWindowDown => {
+            Action::MoveWindowDown(focus) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.move_down();
                 } else {
-                    self.niri.layout.move_down();
+                    self.niri.layout.move_down(focus);
                     self.maybe_warp_cursor_to_focus();
                 }
 
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::MoveWindowUp => {
+            Action::MoveWindowUp(focus) => {
                 if self.niri.screenshot_ui.is_open() {
                     self.niri.screenshot_ui.move_up();
                 } else {
-                    self.niri.layout.move_up();
+                    self.niri.layout.move_up(focus);
                     self.maybe_warp_cursor_to_focus();
                 }
 
@@ -2087,8 +2105,8 @@ impl State {
                     self.niri.queue_redraw_all();
                 }
             }
-            Action::MoveColumnToIndex(idx) => {
-                self.niri.layout.move_column_to_index(idx);
+            Action::MoveColumnToIndex(idx, focus) => {
+                self.niri.layout.move_column_to_index(idx, focus);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();
@@ -2223,18 +2241,18 @@ impl State {
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::SwapWindowRight => {
+            Action::SwapWindowRight(focus) => {
                 self.niri
                     .layout
-                    .swap_window_in_direction(ScrollDirection::Right);
+                    .swap_window_in_direction(ScrollDirection::Right, focus);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
-            Action::SwapWindowLeft => {
+            Action::SwapWindowLeft(focus) => {
                 self.niri
                     .layout
-                    .swap_window_in_direction(ScrollDirection::Left);
+                    .swap_window_in_direction(ScrollDirection::Left, focus);
                 self.maybe_warp_cursor_to_focus();
                 // FIXME: granular
                 self.niri.queue_redraw_all();
@@ -3061,29 +3079,33 @@ impl State {
                 }
             }
             Action::GlobalShortcutActivateAction(action) => {
+                #[cfg(not(feature = "dbus"))]
+                let _ = action;
                 #[cfg(feature = "dbus")]
                 {
                     let Some(shell) = self.niri.gnome_shell.as_ref() else {
-                        warn!(
-                            "attempted to activate action {action} before gnome_shell was \
-                            initialized"
+                        error!(
+                            "attempted to activate global shortcut {action} \
+                             but gnome_shell is missing"
                         );
                         return;
                     };
-                    shell.activate_action(action, input_time, &mut self.niri.activation_state);
+                    shell.activate_action(action, time, &mut self.niri.activation_state);
                 }
             }
             Action::GlobalShortcutDeactivateAction(action) => {
+                #[cfg(not(feature = "dbus"))]
+                let _ = action;
                 #[cfg(feature = "dbus")]
                 {
                     let Some(shell) = self.niri.gnome_shell.as_ref() else {
-                        warn!(
-                            "attempted to deactivate action {action} before gnome_shell was \
-                            initialized"
+                        error!(
+                            "attempted to deactivate global shortcut {action} \
+                             but gnome_shell is missing"
                         );
                         return;
                     };
-                    shell.deactivate_action(action, input_time, &mut self.niri.activation_state);
+                    shell.deactivate_action(action, time, &mut self.niri.activation_state);
                 }
             }
             Action::TestAction => {
@@ -4563,7 +4585,7 @@ impl State {
                         },
                     );
 
-                    // Is proximity in usually immediatelly followed by other events like button? If
+                    // Is proximity in usually immediately followed by other events like button? If
                     // so, then it might be worth delaying this frame() until the loop callback to
                     // batch all of them in.
                     tool.frame(self, time);
@@ -5261,6 +5283,68 @@ impl State {
 
         grab.is::<PickWindowGrab>() || grab.is::<PickColorGrab>() || Self::is_dnd_grab(grab)
     }
+
+    /// Updates focus according to the focus-on-type-in-overview layer rule.
+    ///
+    /// `keysym` is the modified keysym that just got pressed.
+    ///
+    /// Returns `true` if some surface got focused.
+    fn handle_focus_on_type_in_overview(&mut self, keysym: Option<Keysym>) -> bool {
+        /// Checks whether the key should trigger focus-on-type.
+        ///
+        /// This check notably excludes Compose and dead keys:
+        ///
+        /// - They are normally handled by the IME, and an IME cannot work with this focus-on-type
+        ///   implementation since it requires the surface to be focused.
+        /// - Among toolkits that can handle them without an IME, GTK has that disabled by default,
+        ///   and Qt has a bug where it drops the first Compose or dead key (the one that arrives
+        ///   right after wl_keyboard.enter).
+        /// - Dead keys are a bit annoying to check for as there's not a ready-made function for
+        ///   that in xkb.
+        /// - This only concerns the very first typed key, and it is very unlikely that the user
+        ///   wants to start their type to search with a dead key.
+        fn is_typed_keysym(keysym: Keysym) -> bool {
+            keysym.key_char().is_some_and(|c| !c.is_ascii_control())
+        }
+
+        if !self.niri.keyboard_focus.is_overview() {
+            return false;
+        }
+
+        if !keysym.is_some_and(is_typed_keysym) {
+            return false;
+        }
+
+        // Find the surface to focus.
+        //
+        // The focus is on the overview, so we know there are no exclusive or grabbing
+        // layer surfaces.
+        let Some(surface) = self.niri.layout.active_output().and_then(|output| {
+            let layers = layer_map_for_output(output);
+
+            // The order matches how update_keyboard_focus() generally works.
+            let overlay = layers.layers_on(Layer::Overlay).rev();
+            let top = layers.layers_on(Layer::Top).rev();
+            let surface = overlay.chain(top).find(|surface| {
+                if surface.cached_state().keyboard_interactivity
+                    != wlr_layer::KeyboardInteractivity::OnDemand
+                {
+                    return false;
+                }
+
+                self.niri
+                    .mapped_layer_surfaces
+                    .get(surface)
+                    .is_some_and(|mapped| mapped.rules().focus_on_type_in_overview)
+            });
+            surface.cloned()
+        }) else {
+            return false;
+        };
+
+        self.niri.layer_shell_on_demand_focus = Some(surface);
+        true
+    }
 }
 
 impl Niri {
@@ -5354,6 +5438,16 @@ fn should_intercept_key<'a>(
 
     // When inhibiting shortcuts, forward the key.
     if is_inhibiting_shortcuts && bind.allow_inhibiting {
+        return ShouldInterceptResult::Forward;
+    }
+
+    // If the bind is not allowed when locked, forward the key.
+    //
+    // This early return is not necessary to prevent the action from running because
+    // allow_when_locked is also checked in handle_bind() (this is required for key repeat).
+    // However, especially with the GlobalShortcuts portal, it's quite easy to bind single letter
+    // keys. This forward lets them work to type on the lock screen so the user isn't locked out.
+    if is_locked && !bind_allowed_when_locked(&bind, true) {
         return ShouldInterceptResult::Forward;
     }
 
@@ -5718,13 +5812,13 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             | Action::Spawn(_)
             | Action::SpawnSh(_)
             // The screenshot UI can handle these.
-            | Action::MoveColumnLeft
+            | Action::MoveColumnLeft(_)
             | Action::MoveColumnLeftOrToMonitorLeft
-            | Action::MoveColumnRight
+            | Action::MoveColumnRight(_)
             | Action::MoveColumnRightOrToMonitorRight
-            | Action::MoveWindowUp
+            | Action::MoveWindowUp(_)
             | Action::MoveWindowUpOrToWorkspaceUp
-            | Action::MoveWindowDown
+            | Action::MoveWindowDown(_)
             | Action::MoveWindowDownOrToWorkspaceDown
             | Action::MoveColumnToMonitorLeft
             | Action::MoveColumnToMonitorRight
@@ -6221,13 +6315,14 @@ fn make_binds_iter<'a>(
         .into_iter()
         .flatten();
 
-    // The precedence is screenshot UI, then general, then MRU binds, then global shortcuts.
+    // The precedence is screenshot UI, then general, then MRU binds.
     let all_binds = screenshot_binds
         .chain(general_binds)
         .chain(mru_binds)
         .chain(mru_open_binds)
         .chain(overview_binds);
 
+    // The GlobalShortcuts portal binds go last.
     #[cfg(feature = "dbus")]
     let all_binds = all_binds.chain(global_shortcuts.binds());
 
@@ -6598,11 +6693,11 @@ mod tests {
         let result = press_close_key(&mut state, &bindings, Modifiers::SUPER);
 
         // `handle_bind()` drops the press while locked, and nothing is recorded to undo.
-        assert_matches!(result, ShouldInterceptResult::InterceptAndHandle(_));
+        assert_matches!(result, ShouldInterceptResult::Forward);
         assert!(state.pending_release_binds.is_empty());
 
         let result = release_close_key(&mut state, &bindings, Modifiers::SUPER);
-        assert_matches!(result, ShouldInterceptResult::InterceptOnly);
+        assert_matches!(result, ShouldInterceptResult::Forward);
     }
 
     #[test]
@@ -6703,15 +6798,15 @@ mod tests {
         // allowed while the screenshot UI is open.
         let both = |press, release| close_bind(BoundAction::Both { press, release });
         assert!(!bind_allowed_during_screenshot(
-            &both(Action::MoveColumnLeft, Action::CloseWindow),
+            &both(Action::MoveColumnLeft(true), Action::CloseWindow),
             true
         ));
         assert!(!bind_allowed_during_screenshot(
-            &both(Action::CloseWindow, Action::MoveColumnLeft),
+            &both(Action::CloseWindow, Action::MoveColumnLeft(true)),
             true
         ));
         assert!(bind_allowed_during_screenshot(
-            &both(Action::MoveColumnLeft, Action::MoveWindowUp),
+            &both(Action::MoveColumnLeft(true), Action::MoveWindowUp(true)),
             true
         ));
     }
@@ -6719,7 +6814,7 @@ mod tests {
     #[test]
     fn bind_allowed_during_screenshot_requires_only_the_single_action() {
         assert!(bind_allowed_during_screenshot(
-            &close_bind(BoundAction::Press(Action::MoveColumnLeft)),
+            &close_bind(BoundAction::Press(Action::MoveColumnLeft(true))),
             true
         ));
         assert!(!bind_allowed_during_screenshot(
@@ -6734,17 +6829,17 @@ mod tests {
         // not block it.
         let both = |press, release| close_bind(BoundAction::Both { press, release });
         assert!(bind_allowed_during_screenshot(
-            &both(Action::MoveColumnLeft, Action::CloseWindow),
+            &both(Action::MoveColumnLeft(true), Action::CloseWindow),
             false
         ));
         assert!(bind_allowed_during_screenshot(
-            &both(Action::CloseWindow, Action::MoveColumnLeft),
+            &both(Action::CloseWindow, Action::MoveColumnLeft(true)),
             false
         ));
 
         // A release-only bind has no press to undo, so its own action must be allowed.
         assert!(bind_allowed_during_screenshot(
-            &close_bind(BoundAction::Release(Action::MoveColumnLeft)),
+            &close_bind(BoundAction::Release(Action::MoveColumnLeft(true))),
             false
         ));
         assert!(!bind_allowed_during_screenshot(

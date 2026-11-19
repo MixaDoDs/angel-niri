@@ -1577,7 +1577,7 @@ impl<W: LayoutElement> Tile<W> {
             return Point::from((0., 0.));
         }
 
-        let y = baba_is_float_offset(self.clock.now(), self.view_size.h);
+        let y = baba_is_float_offset(self.clock.now_unadjusted(), self.view_size.h);
         let y = round_logical_in_physical(self.scale, y);
         Point::from((0., y))
     }
@@ -1962,6 +1962,10 @@ impl<W: LayoutElement> Tile<W> {
         focus_ring: bool,
         push: &mut dyn FnMut(TileRenderElement<R>),
     ) {
+        if ctx.target.should_hide(self.window.rules().block_out_from) {
+            return;
+        }
+
         let _span = tracy_client::span!("Tile::render");
 
         let scale = Scale::from(self.scale);

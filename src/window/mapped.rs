@@ -761,6 +761,10 @@ impl LayoutElement for Mapped {
         alpha: f32,
         push: &mut dyn FnMut(LayoutElementRenderElement<R>),
     ) {
+        if ctx.target.should_hide(self.rules.block_out_from) {
+            return;
+        }
+
         if ctx.target.should_block_out(self.rules.block_out_from) {
             let geo = self.window.geometry();
             let app_id = with_toplevel_role(self.toplevel(), |role| role.app_id.clone());

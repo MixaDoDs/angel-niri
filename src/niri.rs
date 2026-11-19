@@ -140,7 +140,8 @@ use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospe
 use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
 use crate::frame_clock::FrameClock;
 use crate::handlers::image_copy_capture::{
-    self as image_copy_capture_impl, ImageCopyCursorSession, ImageCopySession,
+    self as image_copy_capture_impl, CursorCaptureGeometry, ImageCopyCursorSession,
+    ImageCopySession,
 };
 use crate::handlers::virtual_keyboard::VirtualKeyboardKeymap;
 use crate::handlers::{configure_lock_surface, XDG_ACTIVATION_TOKEN_TIMEOUT};
@@ -420,6 +421,8 @@ pub struct Niri {
     pub cursor_texture_cache: CursorTextureCache,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub dnd_icon: Option<DndIcon>,
+    /// Outputs that the pointer (along with its DnD icon) overlaps.
+    pub outputs_overlapping_pointer: Vec<Output>,
     /// Contents under pointer.
     ///
     /// Periodically updated: on motion and other events and in the loop callback. If you require
@@ -1044,7 +1047,7 @@ impl State {
         }
         self.niri.image_copy_sessions = sessions;
 
-        // Cursor session constraints are refreshed in refresh_image_copy_cursor_sessions().
+        // Cursor session constraints are refreshed in render_cursor_for_capture().
         let mut cursor_sessions = mem::take(&mut self.niri.image_copy_cursor_sessions);
         cursor_sessions.retain(|s| {
             let source = s.session.source();
@@ -1455,24 +1458,20 @@ impl State {
             let is_overview_open = self.niri.layout.is_overview_open();
 
             let mut surface = grab_on_layer(Layer::Overlay);
-            // FIXME: we shouldn't prioritize the top layer grabs over regular overlay input or a
-            // fullscreen layout window. This will need tracking in grab() to avoid handing it out
-            // in the first place. Or a better way to structure this code.
-            surface = surface.or_else(|| grab_on_layer(Layer::Top));
-
-            if !is_overview_open {
-                surface = surface.or_else(|| grab_on_layer(Layer::Bottom));
-                surface = surface.or_else(|| grab_on_layer(Layer::Background));
-            }
-
-            surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
 
             if mon.render_above_top_layer() {
+                surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
                 surface = surface.or_else(layout_focus);
-                surface = surface.or_else(|| focus_on_layer(Layer::Top));
-                surface = surface.or_else(|| focus_on_layer(Layer::Bottom));
                 surface = surface.or_else(|| focus_on_layer(Layer::Background));
             } else {
+                surface = surface.or_else(|| grab_on_layer(Layer::Top));
+
+                if !is_overview_open {
+                    surface = surface.or_else(|| grab_on_layer(Layer::Bottom));
+                    surface = surface.or_else(|| grab_on_layer(Layer::Background));
+                }
+
+                surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
                 surface = surface.or_else(|| focus_on_layer(Layer::Top));
 
                 if is_overview_open {
@@ -2508,13 +2507,13 @@ impl State {
                 accelerators,
                 results: tx,
             } => {
-                debug!("requesting grab global shortcut accelerators: {accelerators:?}");
+                trace!("GrabAccelerators: requesting grab accelerators: {accelerators:?}");
                 let results = self
                     .niri
                     .global_shortcuts_portal_binds
                     .grab_accelerators(&accelerators);
 
-                debug!("returning actions: {results:?}");
+                trace!("GrabAccelerators: returning actions: {results:?}");
                 if let Err(err) = tx.send_blocking(results) {
                     warn!("error sending grab accelerators result to gnome shell: {err:?}");
                 }
@@ -2523,13 +2522,13 @@ impl State {
                 actions,
                 result: tx,
             } => {
-                debug!("requesting ungrab global shortcut accelerators: {actions:?}",);
+                trace!("UngrabAccelerators: requesting ungrab accelerators: {actions:?}",);
                 let result = self
                     .niri
                     .global_shortcuts_portal_binds
                     .ungrab_accelerators(&actions);
 
-                debug!("returning result: {result:?}");
+                trace!("UngrabAccelerators: returning result: {result:?}");
                 if let Err(err) = tx.send_blocking(result) {
                     warn!("error sending ungrab accelerators result to gnome shell: {err:?}");
                 }
@@ -3025,6 +3024,7 @@ impl Niri {
             cursor_texture_cache: Default::default(),
             cursor_shape_manager_state,
             dnd_icon: None,
+            outputs_overlapping_pointer: Vec::new(),
             pointer_contents: PointContents::default(),
             pointer_visibility: PointerVisibility::Visible,
             pointer_inactivity_timer: None,
@@ -3630,6 +3630,15 @@ impl Niri {
             return false;
         }
 
+        let Some(mon) = self.layout.monitor_for_output(output) else {
+            return false;
+        };
+
+        // A fullscreen window above top layer covers bottom and background popups.
+        if mon.render_above_top_layer() {
+            return false;
+        }
+
         // Check if some layer-shell surface is on top.
         let layers = layer_map_for_output(output);
         let layer_popup_under = |layer| {
@@ -3647,7 +3656,6 @@ impl Niri {
                     layer_pos_within_output += mapped.bob_offset();
 
                     // Background and bottom layers move together with the workspaces.
-                    let mon = self.layout.monitor_for_output(output)?;
                     let (_, geo) = mon.workspace_under(pos_within_output)?;
                     layer_pos_within_output += geo.loc;
 
@@ -3880,11 +3888,6 @@ impl Niri {
             under = under
                 .or_else(interactive_moved_window_under)
                 .or_else(window_under)
-                .or_else(|| layer_popup_under(Layer::Top))
-                .or_else(|| layer_toplevel_under(Layer::Top))
-                .or_else(|| layer_popup_under(Layer::Bottom))
-                .or_else(|| layer_popup_under(Layer::Background))
-                .or_else(|| layer_toplevel_under(Layer::Bottom))
                 .or_else(|| layer_toplevel_under(Layer::Background));
         } else {
             if self.is_inside_hot_corner(output, pos_within_output) {
@@ -4440,6 +4443,8 @@ impl Niri {
     }
 
     pub fn refresh_pointer_outputs(&mut self) {
+        self.outputs_overlapping_pointer.clear();
+
         if !self.pointer_visibility.is_visible() {
             return;
         }
@@ -4461,16 +4466,8 @@ impl Niri {
                         .lock()
                         .unwrap()
                         .hotspot
-                });
-
-                let surface_pos = pointer_pos.to_i32_round() - hotspot;
-                let bbox = bbox_from_surface_tree(surface, surface_pos);
-
-                let dnd = self
-                    .dnd_icon
-                    .as_ref()
-                    .map(|icon| &icon.surface)
-                    .map(|surface| (surface, bbox_from_surface_tree(surface, surface_pos)));
+                })
+                .to_f64();
 
                 // FIXME we basically need to pick the largest scale factor across the overlapping
                 // outputs, this is how it's usually done in clients as well.
@@ -4479,34 +4476,60 @@ impl Niri {
                 let mut dnd_scale = 1.;
                 let mut dnd_transform = Transform::Normal;
                 for output in self.global_space.outputs() {
-                    let geo = self.global_space.output_geometry(output).unwrap();
+                    let output_scale = output.current_scale().fractional_scale();
+                    let geo = self.global_space.output_geometry(output).unwrap().to_f64();
+                    let mut overlaps = false;
 
                     // Compute pointer surface overlap.
+
+                    // Rounding matching render_pointer().
+                    let surface_pos = (pointer_pos - geo.loc - hotspot)
+                        .to_physical_precise_round(output_scale)
+                        .to_logical(output_scale)
+                        + geo.loc;
+                    let mut bbox = bbox_from_surface_tree(surface, (0, 0)).to_f64();
+                    bbox.loc += surface_pos;
+
                     if let Some(mut overlap) = geo.intersection(bbox) {
+                        overlaps = true;
                         overlap.loc -= surface_pos;
-                        cursor_scale =
-                            f64::max(cursor_scale, output.current_scale().fractional_scale());
+                        cursor_scale = f64::max(cursor_scale, output_scale);
                         // FIXME: using the largest overlapping or "primary" output transform would
                         // make more sense here.
                         cursor_transform = output.current_transform();
-                        output_update(output, Some(overlap), surface);
+                        output_update(output, Some(overlap.to_i32_up()), surface);
                     } else {
                         output_update(output, None, surface);
                     }
 
                     // Compute DnD icon surface overlap.
-                    if let Some((surface, bbox)) = dnd {
+                    if let Some(dnd_icon) = &self.dnd_icon {
+                        let surface = &dnd_icon.surface;
+
+                        // Rounding matching render_pointer().
+                        let surface_pos = (pointer_pos - geo.loc + dnd_icon.offset.to_f64())
+                            .to_physical_precise_round(output_scale)
+                            .to_logical(output_scale)
+                            + geo.loc;
+                        let mut bbox = bbox_from_surface_tree(surface, (0, 0)).to_f64();
+                        bbox.loc += surface_pos;
+
                         if let Some(mut overlap) = geo.intersection(bbox) {
+                            overlaps = true;
                             overlap.loc -= surface_pos;
                             dnd_scale =
                                 f64::max(dnd_scale, output.current_scale().fractional_scale());
                             // FIXME: using the largest overlapping or "primary" output transform
                             // would make more sense here.
                             dnd_transform = output.current_transform();
-                            output_update(output, Some(overlap), surface);
+                            output_update(output, Some(overlap.to_i32_up()), surface);
                         } else {
                             output_update(output, None, surface);
                         }
+                    }
+
+                    if overlaps {
+                        self.outputs_overlapping_pointer.push(output.clone());
                     }
                 }
 
@@ -4518,7 +4541,8 @@ impl Niri {
                         cursor_transform,
                     )
                 });
-                if let Some((surface, _)) = dnd {
+                if let Some(dnd_icon) = &self.dnd_icon {
+                    let surface = &dnd_icon.surface;
                     with_states(surface, |data| {
                         send_scale_transform(
                             surface,
@@ -4530,11 +4554,6 @@ impl Niri {
                 }
             }
             cursor_image => {
-                // There's no cursor surface, but there might be a DnD icon.
-                let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) else {
-                    return;
-                };
-
                 let icon = if let CursorImageStatus::Named(icon) = cursor_image {
                     *icon
                 } else {
@@ -4544,43 +4563,78 @@ impl Niri {
                 let mut dnd_scale = 1.;
                 let mut dnd_transform = Transform::Normal;
                 for output in self.global_space.outputs() {
-                    let geo = self.global_space.output_geometry(output).unwrap();
+                    let mut overlaps = false;
+                    let output_scale = output.current_scale().fractional_scale();
+                    let geo = self.global_space.output_geometry(output).unwrap().to_f64();
 
                     // The default cursor is rendered at the right scale for each output, which
                     // means that it may have a different hotspot for each output.
-                    let output_scale = output.current_scale().integer_scale();
+                    let cursor_scale = output.current_scale().integer_scale();
                     let cursor = self
                         .cursor_manager
-                        .get_cursor_with_name(icon, output_scale)
-                        .unwrap_or_else(|| self.cursor_manager.get_default_cursor(output_scale));
+                        .get_cursor_with_name(icon, cursor_scale)
+                        .unwrap_or_else(|| self.cursor_manager.get_default_cursor(cursor_scale));
 
-                    // For simplicity, we always use frame 0 for this computation. Let's hope the
-                    // hotspot doesn't change between frames.
-                    let hotspot = XCursor::hotspot(&cursor.frames()[0]).to_logical(output_scale);
+                    // There's no cursor surface, but there might be a DnD icon.
+                    if let Some(dnd_icon) = &self.dnd_icon {
+                        let surface = &dnd_icon.surface;
 
-                    let surface_pos = pointer_pos.to_i32_round() - hotspot;
-                    let bbox = bbox_from_surface_tree(surface, surface_pos);
+                        // Rounding matching render_pointer().
+                        let surface_pos = (pointer_pos - geo.loc + dnd_icon.offset.to_f64())
+                            .to_physical_precise_round(output_scale)
+                            .to_logical(output_scale)
+                            + geo.loc;
+                        let mut bbox = bbox_from_surface_tree(surface, (0, 0)).to_f64();
+                        bbox.loc += surface_pos;
 
-                    if let Some(mut overlap) = geo.intersection(bbox) {
-                        overlap.loc -= surface_pos;
-                        dnd_scale = f64::max(dnd_scale, output.current_scale().fractional_scale());
-                        // FIXME: using the largest overlapping or "primary" output transform would
-                        // make more sense here.
-                        dnd_transform = output.current_transform();
-                        output_update(output, Some(overlap), surface);
-                    } else {
-                        output_update(output, None, surface);
+                        if let Some(mut overlap) = geo.intersection(bbox) {
+                            overlaps = true;
+                            overlap.loc -= surface_pos;
+                            dnd_scale = f64::max(dnd_scale, output_scale);
+                            // FIXME: using the largest overlapping or "primary" output transform
+                            // would make more sense here.
+                            dnd_transform = output.current_transform();
+                            output_update(output, Some(overlap.to_i32_up()), surface);
+                        } else {
+                            output_update(output, None, surface);
+                        }
+                    }
+
+                    // Check the cursor image itself.
+                    if !overlaps {
+                        // For simplicity, we always use frame 0 for this computation. Let's hope
+                        // the hotspot doesn't change between frames.
+                        let frame = &cursor.frames()[0];
+                        let hotspot = XCursor::hotspot(frame).to_logical(cursor_scale);
+
+                        // Rounding matching render_pointer().
+                        let pos = (pointer_pos - geo.loc - hotspot.to_f64())
+                            .to_physical_precise_round(output_scale)
+                            .to_logical(output_scale)
+                            + geo.loc;
+                        let size = Size::new(f64::from(frame.width), f64::from(frame.height))
+                            / f64::from(cursor_scale);
+                        let bbox = Rectangle::new(pos, size);
+                        overlaps = geo.intersection(bbox).is_some();
+                    }
+
+                    if overlaps {
+                        self.outputs_overlapping_pointer.push(output.clone());
                     }
                 }
 
-                with_states(surface, |data| {
-                    send_scale_transform(
-                        surface,
-                        data,
-                        output::Scale::Fractional(dnd_scale),
-                        dnd_transform,
-                    );
-                });
+                if let Some(dnd_icon) = &self.dnd_icon {
+                    let surface = &dnd_icon.surface;
+
+                    with_states(surface, |data| {
+                        send_scale_transform(
+                            surface,
+                            data,
+                            output::Scale::Fractional(dnd_scale),
+                            dnd_transform,
+                        );
+                    });
+                }
             }
         }
     }
@@ -5074,12 +5128,10 @@ impl Niri {
                 mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
             }
 
-            push_popups_from_layer!(Layer::Top);
-            push_normal_from_layer!(Layer::Top);
-
-            push_popups_from_layer!(Layer::Bottom);
-            push_popups_from_layer!(Layer::Background);
-            push_normal_from_layer!(Layer::Bottom);
+            // Draw only the background layer, matching fill_xray_elements(). The idea is that with
+            // transparent fullscreen backdrop, the fullscreen window having or not having xray
+            // shouldn't change the visuals. This seems to match the visual intent people have when
+            // using a transparent fullscreen backdrop.
             push_normal_from_layer!(Layer::Background);
 
             // We don't expect more than one workspace when render_above_top_layer().
@@ -6464,7 +6516,7 @@ impl Niri {
         let scale: Scale<f64> = output.current_scale().fractional_scale().into();
 
         // The cursor render is the same for all sessions on the output.
-        let mut cached_elements = None;
+        let mut cached_cursor = None;
 
         let mut sessions = mem::take(&mut self.image_copy_cursor_sessions);
         for s in &mut sessions {
@@ -6481,30 +6533,44 @@ impl Niri {
                 continue;
             }
 
-            // The constraints are kept up to date with the cursor image size in
-            // refresh_image_copy_cursor_sessions, which also fails pending frames on change.
-            let Some(constraints) = s.session.current_constraints() else {
-                let frame = s.pending_frame.take().unwrap();
-                frame.fail(CaptureFailureReason::BufferConstraints);
+            let (elements, geometry) = cached_cursor
+                .get_or_insert_with(|| self.render_cursor_for_capture(renderer, output));
+
+            let size_changed = s
+                .session
+                .current_constraints()
+                .is_none_or(|c| (c.size.w, c.size.h) != (geometry.size.w, geometry.size.h));
+            if size_changed {
+                // Cannot capture a frame for outdated constraints, so fail it
+                // before sending the new constraints (otherwise clients which
+                // re-negotiate on failure may miss the new `done`).
+                if let Some(frame) = s.pending_frame.take() {
+                    frame.fail(CaptureFailureReason::BufferConstraints);
+                }
+                let constraints =
+                    image_copy_capture_impl::cursor_capture_constraints(geometry.size);
+                s.session.update_constraints(constraints);
                 continue;
-            };
-            let size = Size::<i32, Physical>::from((constraints.size.w, constraints.size.h));
+            }
+            // Buffer -> Physical
+            let size = Size::<i32, Physical>::new(geometry.size.w, geometry.size.h);
 
             // Recreate the damage tracker if the cursor buffer size or output scale changed.
             reset_damage_tracker_if_changed(&mut s.damage_tracker, size, scale, Transform::Normal);
 
-            let elements = cached_elements
-                .get_or_insert_with(|| self.render_cursor_for_capture(renderer, output));
-
             let (damage, states) = s.damage_tracker.damage_output(1, elements).unwrap();
             if damage.is_none() {
                 // No change, capture the frame later.
+                //
+                // FIXME: also check if the cursor hotspot changed (which could happen without
+                // damage) and redraw the cursor in this case too. This needs exposing
+                // CursorSessionRef::hotspot() from Smithay.
                 continue;
             }
 
             let frame = s.pending_frame.take().unwrap();
             let buffer = frame.buffer();
-            let capture_buffer = image_copy_capture_impl::capture_buffer(&buffer, constraints.size);
+            let capture_buffer = image_copy_capture_impl::capture_buffer(&buffer, geometry.size);
             if !matches!(capture_buffer, Some(CaptureBuffer::Shm(_))) {
                 frame.fail(CaptureFailureReason::BufferConstraints);
                 // Report full damage next time.
@@ -6515,7 +6581,10 @@ impl Niri {
             let res = render_to_shm(renderer, &mut s.damage_tracker, &buffer, elements, states);
             match res {
                 Ok(()) => {
-                    let full_damage = vec![Rectangle::from_size(constraints.size)];
+                    s.session
+                        .set_cursor_hotspot((geometry.hotspot.x, geometry.hotspot.y));
+
+                    let full_damage = vec![Rectangle::from_size(geometry.size)];
                     frame.success(Transform::Normal, full_damage, target_presentation_time);
                 }
                 Err(err) => {
@@ -6541,56 +6610,46 @@ impl Niri {
         &self,
         renderer: &mut GlesRenderer,
         output: &Output,
-    ) -> Vec<PointerRenderElements<GlesRenderer>> {
-        let int_scale = output.current_scale().integer_scale();
-        let output_scale = Scale::from(output.current_scale().fractional_scale());
+    ) -> (
+        Vec<RelocateRenderElement<PointerRenderElements<GlesRenderer>>>,
+        CursorCaptureGeometry,
+    ) {
+        let output_scale = output.current_scale();
+        let scale = Scale::from(output_scale.fractional_scale());
 
         let mut elements = Vec::new();
-        match self.cursor_manager.get_render_cursor(int_scale) {
-            RenderCursor::Hidden => (),
-            RenderCursor::Surface { surface, .. } => {
-                // Subsurfaces can extend above or to the left of the root surface, so shift the
-                // tree to put its bounding box at the origin. The hotspot is shifted to match in
-                // cursor_capture_hotspot().
-                let bbox = smithay::desktop::utils::bbox_from_surface_tree(&surface, (0, 0));
-                let loc = Point::<i32, Logical>::from((-bbox.loc.x, -bbox.loc.y))
-                    .to_f64()
-                    .to_physical_precise_round(output_scale);
-                push_elements_from_surface_tree(
-                    renderer,
-                    &surface,
-                    loc,
-                    output_scale,
-                    1.,
-                    Kind::Cursor,
-                    &mut |elem| elements.push(elem.into()),
-                );
-            }
-            RenderCursor::Named {
-                icon,
-                scale,
-                cursor,
-            } => {
-                let (idx, _frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
-                let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
-                match MemoryRenderBufferRenderElement::from_buffer(
-                    renderer,
-                    Point::<f64, _>::from((0., 0.)),
-                    &texture,
-                    None,
-                    None,
-                    None,
-                    Kind::Cursor,
-                ) {
-                    Ok(element) => elements.push(element.into()),
-                    Err(err) => {
-                        warn!("error importing a cursor texture: {err:?}");
-                    }
-                }
-            }
+        self.render_pointer(renderer, output, &mut |elem| elements.push(elem));
+
+        // We need the elements at (0, 0) for damage tracking.
+        let geo = encompassing_geo(scale, elements.iter());
+        let off = geo.loc.upscale(-1);
+
+        let elements = elements
+            .into_iter()
+            .map(|elem| RelocateRenderElement::from_element(elem, off, Relocate::Relative))
+            .collect();
+
+        let output_loc = self.global_space.output_geometry(output).unwrap().loc;
+        let pointer_loc = self
+            .tablet_cursor_location
+            .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
+        let hotspot =
+            (pointer_loc - output_loc.to_f64()).to_physical_precise_round(scale) - geo.loc;
+
+        // Physical -> Buffer
+        let mut size = Size::new(geo.size.w, geo.size.h);
+        let hotspot = Point::new(hotspot.x, hotspot.y);
+
+        // Fall back to the nominal cursor size when the cursor is currently hidden or has no
+        // buffer, so that the session always has valid constraints.
+        if size.is_empty() {
+            let int_scale = output_scale.integer_scale();
+            let fallback = i32::from(self.config.borrow().cursor.xcursor_size) * int_scale;
+            size = Size::from((fallback, fallback));
         }
 
-        elements
+        let geometry = CursorCaptureGeometry { size, hotspot };
+        (elements, geometry)
     }
 
     /// Sends cursor position, hotspot and size to cursor sessions independently
@@ -6632,26 +6691,6 @@ impl Niri {
 
             let scale = Scale::from(output.current_scale().fractional_scale());
 
-            // Update the constraints if the cursor image size changed.
-            let constraints = image_copy_capture_impl::cursor_capture_constraints(self, &output);
-            let cursor_size = constraints.size;
-            let size_changed = s
-                .session
-                .current_constraints()
-                .is_none_or(|c| (c.size.w, c.size.h) != (constraints.size.w, constraints.size.h));
-            if size_changed {
-                // Cannot capture a frame for outdated constraints, so fail it
-                // before sending the new constraints (otherwise clients which
-                // re-negotiate on failure may miss the new `done`).
-                if let Some(frame) = s.pending_frame.take() {
-                    frame.fail(CaptureFailureReason::BufferConstraints);
-                }
-                s.session.update_constraints(constraints);
-            }
-
-            let hotspot = image_copy_capture_impl::cursor_capture_hotspot(self, &output);
-            s.session.set_cursor_hotspot((hotspot.x, hotspot.y));
-
             let pos = if !self.pointer_visibility.is_visible() {
                 None
             } else if let Some(mapped) = mapped {
@@ -6678,13 +6717,7 @@ impl Niri {
                             .to_physical_precise_round(scale);
                         Point::from((ipos.x, ipos.y))
                     })
-            } else if let Some(mode) = output.current_mode() {
-                // Unlike frame damage, the position is in transformed buffer coordinates, i.e. the
-                // displayed orientation, so the output transform is not undone here. This matches
-                // wlroots.
-                let pos: Point<i32, Physical> =
-                    (pointer_pos - output_geo.loc.to_f64()).to_physical_precise_round(scale);
-
+            } else {
                 // Cursors are considered to have entered if any part of the image
                 // intersects the output, not just the hotspot, so the position may
                 // be negative or past the edge.
@@ -6697,16 +6730,15 @@ impl Niri {
                 // This intentionally differs from how PipeWire casts work since PW
                 // requires the pointer to be within the output bounds, but this
                 // isn't relevant (or wanted) for the imagecopy protocol.
-                let hotspot = Point::<i32, Physical>::from((hotspot.x, hotspot.y));
-                let image =
-                    Rectangle::new(pos - hotspot, Size::from((cursor_size.w, cursor_size.h)));
-                let output_rect =
-                    Rectangle::from_size(output.current_transform().transform_size(mode.size));
-                image
-                    .overlaps(output_rect)
-                    .then_some(Point::from((pos.x, pos.y)))
-            } else {
-                None
+                self.outputs_overlapping_pointer.contains(&output).then(|| {
+                    // Unlike frame damage, the position is in transformed buffer coordinates,
+                    // i.e. the displayed orientation, so the output transform is not undone here.
+                    // This matches wlroots.
+                    let pos: Point<i32, Physical> =
+                        (pointer_pos - output_geo.loc.to_f64()).to_physical_precise_round(scale);
+
+                    Point::from((pos.x, pos.y))
+                })
             };
             s.session.set_cursor_pos(pos);
         }
@@ -6745,7 +6777,8 @@ impl Niri {
             let id = mapped.id();
 
             let mut value = false;
-            for session in &self.image_copy_sessions {
+            // Same as for IPC, one-shot screenshots aren't casts.
+            for session in self.image_copy_sessions.iter().filter(|s| s.is_cast()) {
                 let source = session.session.source();
                 if image_copy_capture_impl::source_mapped_id(&source) == Some(id) {
                     value = true;
@@ -6909,6 +6942,12 @@ impl Niri {
         show_pointer: bool,
         path: Option<String>,
     ) -> anyhow::Result<()> {
+        let target = RenderTarget::ScreenCapture;
+        if target.should_hide(mapped.rules().block_out_from) {
+            // We won't have any elements to render. Saving a fully transparent picture is odd.
+            bail!("window is hidden from screen capture");
+        }
+
         let _span = tracy_client::span!("Niri::screenshot_window");
 
         let scale = Scale::from(output.current_scale().fractional_scale());
@@ -6937,7 +6976,7 @@ impl Niri {
 
         let ctx = RenderCtx {
             renderer,
-            target: RenderTarget::ScreenCapture,
+            target,
             xray: None,
         };
         mapped.render(
@@ -7599,6 +7638,11 @@ impl Niri {
             if current_focus.output.as_ref() != Some(output) {
                 self.layout.focus_output(output);
             }
+        }
+
+        // Skip focusing the window/layer when outputs-only=true
+        if let Some(true) = ffm.outputs_only {
+            return;
         }
 
         if let Some(window) = &new_focus.window {
