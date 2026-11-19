@@ -7,6 +7,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::sync::SyncPoint;
 use smithay::output::{Output, WeakOutput};
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{Interest, LoopHandle, Mode, PostAction};
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_pointer::WlPointer;
@@ -30,6 +31,8 @@ use crate::niri::{Niri, State};
 use crate::render_helpers::{CaptureBuffer, RenderTarget};
 use crate::utils::{get_credentials_for_client, get_monotonic_time, CastSessionId, CastStreamId};
 use crate::window::mapped::{Mapped, MappedId};
+
+const MINIMIZED_FRAME_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Output capture session.
 pub struct ImageCopySession {
@@ -265,6 +268,31 @@ pub fn frame_success_after_sync<T>(
     }
 }
 
+fn wake_minimized_capture(niri: &Niri, id: MappedId) {
+    if !niri.monitors_active
+        || !niri.image_copy_sessions.iter().any(|session| {
+            session.pending_frame.is_some()
+                && source_mapped_id(&session.session.source()) == Some(id)
+        })
+    {
+        return;
+    }
+
+    let Some((mapped, Some(output))) = niri.find_capture_window_by_id(id) else {
+        return;
+    };
+    if mapped.is_minimized()
+        && !RenderTarget::ScreenCapture.should_block_out(mapped.rules().block_out_from)
+    {
+        mapped.window.send_frame(
+            output,
+            get_monotonic_time(),
+            Some(MINIMIZED_FRAME_INTERVAL),
+            |_, _| None,
+        );
+    }
+}
+
 impl ImageCaptureSourceHandler for State {}
 
 impl OutputCaptureSourceHandler for State {
@@ -393,19 +421,24 @@ impl ImageCopyCaptureHandler for State {
             let Some((mapped, Some(output))) = self.niri.find_capture_window_by_id(id) else {
                 return;
             };
-            // Only requests for a captured minimized window may wake its client.
-            // The same throttle applies if multiple sessions request that window.
-            if mapped.is_minimized()
-                && !RenderTarget::ScreenCapture.should_block_out(mapped.rules().block_out_from)
-            {
-                mapped.window.send_frame(
-                    output,
-                    get_monotonic_time(),
-                    Some(Duration::from_millis(100)),
-                    |_, _| None,
-                );
+            let output = output.clone();
+            if mapped.is_minimized() {
+                wake_minimized_capture(&self.niri, id);
+                // A just-sent callback can throttle this request. Retry once while it is
+                // pending, without waiting for the compositor's one-second fallback tick.
+                let retry = Timer::from_duration(MINIMIZED_FRAME_INTERVAL);
+                if let Err(err) = self
+                    .niri
+                    .event_loop
+                    .insert_source(retry, move |_, _, state| {
+                        wake_minimized_capture(&state.niri, id);
+                        TimeoutAction::Drop
+                    })
+                {
+                    warn!("error scheduling a minimized capture callback: {err}");
+                }
             }
-            Some(output.clone())
+            Some(output)
         } else {
             source_output(&source)
         };
