@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate tracing;
 
+mod window_crop;
+
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, Write};
@@ -101,6 +103,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle subcommands.
     if let Some(subcommand) = cli.subcommand {
         match subcommand {
+            Sub::WindowCrop {
+                id,
+                directory,
+                once,
+                crop,
+                max_width,
+                max_height,
+            } => {
+                return Ok(window_crop::run(
+                    id,
+                    &directory,
+                    once,
+                    &crop,
+                    (max_width, max_height),
+                )?);
+            }
             Sub::Validate { config } => {
                 tracy_client::Client::start();
 

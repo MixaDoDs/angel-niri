@@ -61,6 +61,7 @@ atomic = "0.6.1"
 bitflags.workspace = true
 bytemuck = { version = "1.25.2", features = ["derive"] }
 calloop = { version = "0.14.5", features = ["executor", "futures-io", "signals"] }
+calloop-wayland-source = "0.4.1"
 clap = { workspace = true, features = ["string"] }
 clap_complete = "4.6"
 clap_complete_nushell = "4.6"
@@ -75,6 +76,7 @@ keyframe = { version = "1.1.1", default-features = false }
 libc = "0.2.189"
 libdisplay-info = "0.3.0"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_debug"] }
+memmap2 = "0.9"
 niri-config = { version = "26.4.0", path = "niri-config" }
 niri-ipc = { version = "26.4.0", path = "niri-ipc", features = ["clap"] }
 ordered-float = "5"
@@ -92,6 +94,8 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 tracy-client.workspace = true
 wayland-backend = "0.3"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 wayland-scanner = "0.31.11"
 wayland-server = "0.31.14"
 xcursor = "0.3.11"
@@ -117,12 +121,10 @@ features = [
 
 [dev-dependencies]
 approx = "0.5.1"
-calloop-wayland-source = "0.4.1"
 insta.workspace = true
 proptest = "1.11.0"
 proptest-derive = { version = "0.8.0", features = ["boxed_union"] }
 rayon = "1.12.0"
-wayland-client = "0.31.15"
 xshell = "0.2.7"
 
 [build-dependencies]

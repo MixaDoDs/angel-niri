@@ -36,6 +36,22 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Sub {
+    /// Capture a region of a window to a private runtime directory.
+    #[command(hide = true)]
+    WindowCrop {
+        #[arg(long)]
+        id: u64,
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        once: bool,
+        #[arg(long, default_value = "0,0,1,1")]
+        crop: String,
+        #[arg(long, default_value_t = 1280, value_parser = clap::value_parser!(u32).range(1..=4096))]
+        max_width: u32,
+        #[arg(long, default_value_t = 960, value_parser = clap::value_parser!(u32).range(1..=4096))]
+        max_height: u32,
+    },
     /// Communicate with the running niri instance.
     Msg {
         #[command(subcommand)]
